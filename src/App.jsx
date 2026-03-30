@@ -151,6 +151,8 @@ ${avoid?`Evita: ${avoid}`:""}
 Responde SOLO JSON sin backticks:
 {"cards":[{"front":"alemán","back":"español","phonetic":"fonética","tip":"consejo"}]}
 Reglas: artículo en sustantivos, phonetic silábica mayúsculas, tip máx 8 palabras. Verbos: primera persona.`;
+const prompt = "Genera exactamente 8 tarjetas de alemán para hispanohablantes. Nivel: " + level + ". Categoria: " + category + ". Responde SOLO JSON sin backticks: {\"cards\":[{\"front\":\"aleman\",\"back\":\"español\",\"phonetic\":\"fonetica\",\"tip\":\"consejo\"}]}";
+
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
