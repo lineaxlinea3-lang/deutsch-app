@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import './App.css';
 
 // --- CONFIGURACIÓN INICIAL (CARTAS SEMILLA) ---
 const SEED_CARDS = [
@@ -18,10 +17,7 @@ async function generateCards(level, category, existingFronts=[]) {
     return []; 
   }
 
-  const prompt = `Genera exactamente 8 tarjetas de alemán para hispanohablantes. 
-  Nivel: ${level}. Categoría: ${category}. 
-  Responde SOLO el JSON puro, sin markdown ni backticks: 
-  {"cards":[{"front":"alemán","back":"español","phonetic":"fonética","tip":"consejo"}]}`;
+  const prompt = `Genera exactamente 8 tarjetas de alemán para hispanohablantes. Nivel: ${level}. Categoría: ${category}. Responde SOLO el JSON puro, sin markdown ni backticks: {"cards":[{"front":"alemán","back":"español","phonetic":"fonética","tip":"consejo"}]}`;
 
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
@@ -71,35 +67,51 @@ function App() {
   };
 
   return (
-    <div className="App">
+    <div style={{ backgroundColor: '#121212', color: 'white', minHeight: '100vh', padding: '20px', fontFamily: 'sans-serif', textAlign: 'center' }}>
       <header>
         <h1>Deutsch ∞</h1>
-        <div className="controls">
-          <button onClick={() => setLevel('A1')} className={level === 'A1' ? 'active' : ''}>A1</button>
-          <button onClick={() => setLevel('A2')} className={level === 'A2' ? 'active' : ''}>A2</button>
+        <div style={{ marginBottom: '20px' }}>
+          <button onClick={() => setLevel('A1')} style={{ padding: '10px', margin: '5px', backgroundColor: level === 'A1' ? '#4CAF50' : '#333', color: 'white', border: 'none', borderRadius: '5px' }}>A1</button>
+          <button onClick={() => setLevel('A2')} style={{ padding: '10px', margin: '5px', backgroundColor: level === 'A2' ? '#4CAF50' : '#333', color: 'white', border: 'none', borderRadius: '5px' }}>A2</button>
         </div>
       </header>
 
       <main>
         {loading ? (
-          <div className="loader">Generando tarjetas con IA...</div>
+          <div>Generando tarjetas con IA...</div>
         ) : (
-          <div className={`card ${isFlipped ? 'flipped' : ''}`} onClick={() => setIsFlipped(!isFlipped)}>
-            <div className="card-inner">
-              <div className="card-front">
-                <h2>{currentCard?.front}</h2>
-                <p className="phonetic">{currentCard?.phonetic}</p>
+          <div 
+            onClick={() => setIsFlipped(!isFlipped)}
+            style={{ 
+              width: '300px', height: '200px', margin: '0 auto', 
+              backgroundColor: '#1e1e1e', borderRadius: '15px', 
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', border: '1px solid #333', position: 'relative'
+            }}
+          >
+            {!isFlipped ? (
+              <div>
+                <h2 style={{ fontSize: '2rem' }}>{currentCard?.front}</h2>
+                <p style={{ color: '#aaa' }}>{currentCard?.phonetic}</p>
               </div>
-              <div className="card-back">
-                <h2>{currentCard?.back}</h2>
-                <p className="tip">💡 {currentCard?.tip}</p>
+            ) : (
+              <div>
+                <h2 style={{ color: '#4CAF50' }}>{currentCard?.back}</h2>
+                <p style={{ fontSize: '0.9rem', padding: '0 10px' }}>💡 {currentCard?.tip}</p>
               </div>
-            </div>
+            )}
           </div>
         )}
-        <button className="next-btn" onClick={handleNext} disabled={loading}>
-          {currentIndex < cards.length - 1 ? "Siguiente" : "Generar más con IA"}
-        </button>
+        
+        <div style={{ marginTop: '20px' }}>
+          <button 
+            onClick={handleNext} 
+            disabled={loading}
+            style={{ padding: '15px 30px', fontSize: '1rem', borderRadius: '25px', backgroundColor: '#4CAF50', color: 'white', border: 'none', cursor: 'pointer' }}
+          >
+            {currentIndex < cards.length - 1 ? "Siguiente" : "Generar más con IA"}
+          </button>
+        </div>
       </main>
     </div>
   );
