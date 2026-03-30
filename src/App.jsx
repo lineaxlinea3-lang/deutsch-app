@@ -141,7 +141,7 @@ function useSpeechRecognition() {
 
 // ─── AI GENERATOR ──────────────────────────────────────────────────────────
 async function generateCards(level, category, existingFronts=[]) {
-  const apiKey =import.meta.env.VITE_ANTHROPIC_KEY;
+  const apiKey =process.env.REACT_APP_ANTHROPIC_KEY;
   if (!apiKey) { console.warn("configura VITE_ANTHROPIC_KEY in Vercel."); return []; }
   const avoid = existingFronts.slice(-20).join(", ");
   const prompt = `Genera exactamente 8 tarjetas de alemán para hispanohablantes.
