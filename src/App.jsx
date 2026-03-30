@@ -151,10 +151,19 @@ ${avoid?`Evita: ${avoid}`:""}
 Responde SOLO JSON sin backticks:
 {"cards":[{"front":"alemán","back":"español","phonetic":"fonética","tip":"consejo"}]}
 Reglas: artículo en sustantivos, phonetic silábica mayúsculas, tip máx 8 palabras. Verbos: primera persona.`;
-  const res = await fetch("https://api.anthropic.com/v1/messages",{
-    method:"POST",
-    headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-    body:JSON.stringify({model:"claude-3-5-sonnet-20240620",max_tokens:1000,messages:[{role:"user",content:prompt}]}),
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
+    body: JSON.stringify({
+      model: "claude-3-5-sonnet-20240620",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: prompt }]
+    }),
   });
   const data=await res.json();
   const text=data.content?.map(b=>b.text||"").join("")||"";
