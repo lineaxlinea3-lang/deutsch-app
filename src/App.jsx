@@ -1,5 +1,6 @@
 
 import { useState, useEffect, useRef } from "react";
+
 // ─── SEED CARDS ────────────────────────────────────────────────────────────
 const SEED_CARDS = {
   "A1-Vocabulario": [
@@ -94,7 +95,7 @@ const THEME = {
   A2: { accent: "#1e90ff", glow: "rgba(30,144,255,0.3)", glass: "rgba(30,144,255,0.08)", border: "rgba(30,144,255,0.22)", label: "Básico" },
 };
 
-// ─── GEMINI API ────────────────────────────────────────────────────────────
+// ─── GEMINI API (sin cambios) ─────────────────────────────────────────────
 async function generateCards(level, category, existingFronts = []) {
   const apiKey = process.env.REACT_APP_GEMINI_KEY;
   if (!apiKey) {
@@ -153,7 +154,7 @@ Reglas: artículo der/die/das, phonetic en MAYÚSCULAS, tip corto y útil, verbo
 
     const parsed = JSON.parse(text);
     const newCards = parsed.cards || [];
-    console.log(`✅ Gemini generó ${newCards.length} tarjetas`);
+    console.log(`✅ Gemini generó ${newCards.length} tarjetas para \( {level}- \){category}`);
     return Array.isArray(newCards) ? newCards : [];
   } catch (e) {
     console.error("❌ Error Gemini:", e);
@@ -161,7 +162,7 @@ Reglas: artículo der/die/das, phonetic en MAYÚSCULAS, tip corto y útil, verbo
   }
 }
 
-// ─── SPEECH + PRONUNCIATION ────────────────────────────────────────────────
+// ─── SPEECH + PRONUNCIATION (completo) ─────────────────────────────────────
 function speakGerman(text, onStart, onEnd) {
   if (!window.speechSynthesis) return;
   window.speechSynthesis.cancel();
@@ -294,7 +295,7 @@ function PronunciationPanel({ card, theme, onSpeak, speaking }) {
   );
 }
 
-// ─── MAIN APP (con el fix del loading) ─────────────────────────────────────
+// ─── MAIN APP (FIX: generación más confiable) ───────────────────────────────
 export default function DeutschAI() {
   const [level, setLevel] = useState("A1");
   const [category, setCategory] = useState("Vocabulario");
@@ -314,7 +315,6 @@ export default function DeutschAI() {
   const deckKey = `\( {level}- \){category}`;
   const theme = THEME[level];
 
-  // SAFE CARD + CLAMP INDEX (esto arregla el bug de "Cargando tarjetas...")
   const safeIndex = Math.max(0, Math.min(index, deck.length - 1));
   const card = deck[safeIndex];
 
@@ -331,16 +331,16 @@ export default function DeutschAI() {
     generatingRef.current = false;
   }, [deckKey]);
 
-  // Mantiene el índice válido cuando el mazo crece
   useEffect(() => {
     if (deck.length > 0 && index !== safeIndex) {
       setIndex(safeIndex);
     }
   }, [deck.length, index, safeIndex]);
 
+  // FIX: generación más agresiva (últimas 8 tarjetas en vez de 4)
   useEffect(() => {
     const tooFew = deck.length < 8;
-    const nearEnd = deck.length > 0 && safeIndex >= deck.length - 4;
+    const nearEnd = deck.length > 0 && safeIndex >= deck.length - 8;
     if ((tooFew || nearEnd) && !generatingRef.current) {
       loadMoreCards();
     }
@@ -350,12 +350,13 @@ export default function DeutschAI() {
     if (generatingRef.current) return;
     generatingRef.current = true;
     setGenerating(true);
-    console.log(`🔄 Generando más tarjetas para ${deckKey}...`);
+    console.log(`🔄 Generando más tarjetas para ${deckKey}... (actual: ${deck.length})`);
 
     try {
       const newCards = await generateCards(level, category, deck.map(c => c.front));
       if (newCards.length > 0) {
         setDeck(prev => [...prev, ...newCards]);
+        console.log(`✅ Se agregaron ${newCards.length} tarjetas. Total ahora: ${deck.length + newCards.length}`);
       }
     } catch (e) {
       console.error(e);
@@ -404,10 +405,87 @@ export default function DeutschAI() {
       padding: "28px 16px 52px", position: "relative", overflow: "hidden",
     }}>
 
-      {/* Background orbs, Header, Level selector, Progress bar (igual que antes) */}
-      {/* ... (todo el código de orbs, header, level buttons y progress bar que ya tenías) ... */}
+      {/* Background orbs */}
+      <div style={{ position: "fixed", left: "10%", top: "15%", width: 300, height: 300, borderRadius: "50%", background: theme.glow, filter: "blur(80px)", pointerEvents: "none", animation: "orbFloat 7s ease-in-out infinite alternate", opacity: 0.5 }} />
+      <div style={{ position: "fixed", right: "5%", top: "55%", width: 220, height: 220, borderRadius: "50%", background: level === "A1" ? "rgba(29,185,84,0.1)" : "rgba(30,144,255,0.1)", filter: "blur(70px)", pointerEvents: "none", animation: "orbFloat 9s ease-in-out infinite alternate-reverse", opacity: 0.5 }} />
+      <div style={{ position: "fixed", left: "40%", bottom: "10%", width: 180, height: 180, borderRadius: "50%", background: "rgba(120,40,200,0.08)", filter: "blur(60px)", pointerEvents: "none", animation: "orbFloat 11s ease-in-out infinite alternate" }} />
 
-      {/* CARD */}
+      {/* Header */}
+      <div style={{ textAlign: "center", marginBottom: 24, animation: "fadeDown 0.5s ease" }}>
+        <div style={{ fontSize: 10, letterSpacing: 5, color: "rgba(255,255,255,0.2)", textTransform: "uppercase", marginBottom: 6 }}>
+          IA · Tarjetas infinitas
+        </div>
+        <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: -1, background: `linear-gradient(135deg, #fff 30%, ${theme.accent})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+          Deutsch ∞
+        </div>
+        <div style={{ fontSize: 11, color: theme.accent, marginTop: 4, opacity: 0.7 }}>
+          {deck.length} tarjetas en mazo
+        </div>
+      </div>
+
+      {/* Level + Category */}
+      <div style={{ display: "flex", gap: 12, marginBottom: 24, alignItems: "flex-start", justifyContent: "center", animation: "fadeDown 0.5s ease 0.1s both" }}>
+        {LEVELS.map(l => {
+          const t = THEME[l];
+          const isOpen = openLevel === l;
+          const isActive = level === l;
+          return (
+            <div key={l} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+              {isOpen && (
+                <div style={{
+                  display: "flex", gap: 6, padding: "10px 14px",
+                  background: "rgba(255,255,255,0.92)", borderRadius: 40,
+                  boxShadow: `0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.1)`,
+                  animation: "popUp 0.25s cubic-bezier(.17,.67,.25,1.3)",
+                  position: "relative",
+                }}>
+                  {CATEGORIES.map(c => (
+                    <button key={c} onClick={() => { setLevel(l); setCategory(c); setOpenLevel(null); }} style={{
+                      width: 48, height: 48, borderRadius: "50%",
+                      background: level === l && category === c ? t.accent : "rgba(0,0,0,0.06)",
+                      border: "none", cursor: "pointer",
+                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1,
+                      transition: "all 0.2s",
+                      transform: level === l && category === c ? "scale(1.1)" : "scale(1)",
+                    }}>
+                      <span style={{ fontSize: 20, lineHeight: 1 }}>{CAT_ICONS[c]}</span>
+                      <span style={{ fontSize: 7, fontWeight: 700, color: level === l && category === c ? "#fff" : "#555", letterSpacing: 0.3, textTransform: "uppercase" }}>{c.slice(0,4)}</span>
+                    </button>
+                  ))}
+                  <div style={{ position: "absolute", bottom: -8, left: "50%", transform: "translateX(-50%)", width: 0, height: 0, borderLeft: "8px solid transparent", borderRight: "8px solid transparent", borderTop: "9px solid rgba(255,255,255,0.92)" }} />
+                </div>
+              )}
+              <button onClick={() => setOpenLevel(isOpen ? null : l)} style={{
+                padding: "10px 22px", borderRadius: 30,
+                background: isActive ? `linear-gradient(135deg,\( {t.accent}25, \){t.accent}0a)` : "rgba(255,255,255,0.04)",
+                border: `2px solid ${isActive ? t.accent : "rgba(255,255,255,0.1)"}`,
+                color: isActive ? t.accent : "rgba(255,255,255,0.35)",
+                fontSize: 14, fontWeight: 800, cursor: "pointer",
+                boxShadow: isActive ? `0 0 22px ${t.glow}` : "none",
+                transition: "all 0.3s ease",
+                transform: isOpen ? "scale(1.08)" : "scale(1)",
+                backdropFilter: "blur(12px)",
+              }}>
+                {l}
+                <span style={{ fontSize: 9, opacity: 0.6, marginLeft: 5, display: "block", letterSpacing: 1, textTransform: "uppercase" }}>{t.label}</span>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Progress bar */}
+      <div style={{ width: "100%", maxWidth: 400, marginBottom: 20, animation: "fadeDown 0.5s ease 0.2s both" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5, fontSize: 11, color: "rgba(255,255,255,0.22)" }}>
+          <span>{card ? `${safeIndex + 1} / ${deck.length}` : "—"}</span>
+          <span style={{ color: theme.accent }}>{known.size} aprendidas</span>
+        </div>
+        <div style={{ height: 3, background: "rgba(255,255,255,0.05)", borderRadius: 2, overflow: "hidden" }}>
+          <div style={{ height: "100%", borderRadius: 2, background: `linear-gradient(90deg,\( {theme.accent}, \){theme.accent}77)`, width: `${progress}%`, transition: "width 0.6s ease", boxShadow: `0 0 8px ${theme.glow}` }} />
+        </div>
+      </div>
+
+      {/* Card */}
       {deck.length === 0 ? (
         <div style={{ width: "100%", maxWidth: 400, minHeight: 280, borderRadius: 24, ...glassBase, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
           <div style={{ fontSize: 28, animation: "spin 1s linear infinite" }}>⟳</div>
@@ -436,12 +514,161 @@ export default function DeutschAI() {
             marginBottom: 14,
           }}
         >
-          {/* contenido de la card (front / back) igual que antes */}
-          {/* ... (usa {card.front}, {card.phonetic}, {card.back}, {card.tip} ...) ... */}
+          <div style={{ position: "absolute", top: 16, left: 20, fontSize: 10, color: "rgba(255,255,255,0.22)", letterSpacing: 2, textTransform: "uppercase" }}>
+            {CAT_ICONS[category]} {category}
+          </div>
+          <div style={{ position: "absolute", top: 16, right: 20, fontSize: 10, fontWeight: 700, color: flipped ? theme.accent : "rgba(255,255,255,0.15)", transition: "color 0.3s" }}>
+            {flipped ? "ES" : "DE"}
+          </div>
+
+          {!flipped ? (
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 42, fontWeight: 800, letterSpacing: -1.5, marginBottom: 18, lineHeight: 1.1, textShadow: `0 0 40px ${theme.glow}` }}>
+                {card.front}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4 }}>
+                <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} title="Escuchar" style={{
+                  width: 44, height: 44, borderRadius: "50%",
+                  background: speaking ? theme.glass : "rgba(255,255,255,0.06)",
+                  border: `2px solid ${speaking ? theme.accent : "rgba(255,255,255,0.12)"}`,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  cursor: "pointer", boxShadow: speaking ? `0 0 20px ${theme.glow}` : "none", transition: "all 0.25s",
+                }}>
+                  <span style={{ fontSize: 20, animation: speaking ? "speakPulse 0.6s ease infinite alternate" : "none" }}>🔊</span>
+                </button>
+                <span style={{ fontSize: 12, color: "rgba(255,255,255,0.28)", fontStyle: "italic" }}>{card.phonetic}</span>
+              </div>
+            </div>
+          ) : (
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 36, fontWeight: 700, color: theme.accent, marginBottom: 14, lineHeight: 1.2, textShadow: `0 0 30px ${theme.glow}` }}>
+                {card.back}
+              </div>
+              <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} title="Escuchar" style={{
+                width: 40, height: 40, borderRadius: "50%",
+                background: speaking ? theme.glass : "rgba(255,255,255,0.05)",
+                border: `2px solid ${speaking ? theme.accent : "rgba(255,255,255,0.1)"}`,
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                cursor: "pointer", marginBottom: showTip ? 12 : 0, transition: "all 0.2s",
+                boxShadow: speaking ? `0 0 16px ${theme.glow}` : "none",
+              }}>
+                <span style={{ fontSize: 18, animation: speaking ? "speakPulse 0.6s ease infinite alternate" : "none" }}>🔊</span>
+              </button>
+              {showTip && (
+                <div style={{ fontSize: 12, background: "rgba(0,0,0,0.3)", padding: "8px 16px", borderRadius: 12, color: "rgba(255,255,255,0.5)", border: "1px solid rgba(255,255,255,0.08)", marginTop: 10 }}>
+                  💡 {card.tip}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div style={{ position: "absolute", bottom: 12, fontSize: 10, color: "rgba(255,255,255,0.1)" }}>
+            toca para {flipped ? "ocultar" : "voltear"}
+          </div>
         </div>
       )}
 
-      {/* El resto del JSX (toggles, PronunciationPanel, action buttons, stats, botón generar) es exactamente igual que en la versión anterior */}
+      {/* Toggles */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", justifyContent: "center" }}>
+        {flipped && card && (
+          <button onClick={() => setShowTip(s => !s)} style={{
+            background: showTip ? theme.glass : "transparent",
+            border: `1px solid ${showTip ? theme.accent : "rgba(255,255,255,0.08)"}`,
+            color: showTip ? theme.accent : "rgba(255,255,255,0.28)",
+            padding: "6px 16px", borderRadius: 20, fontSize: 11, cursor: "pointer", transition: "all 0.2s",
+          }}>
+            {showTip ? "Ocultar consejo" : "💡 Ver consejo"}
+          </button>
+        )}
+        {card && (
+          <button onClick={() => setShowPronunciation(s => !s)} style={{
+            width: 44, height: 44, borderRadius: "50%",
+            background: showPronunciation ? theme.glass : "rgba(255,255,255,0.05)",
+            border: `2px solid ${showPronunciation ? theme.accent : "rgba(255,255,255,0.1)"}`,
+            color: showPronunciation ? theme.accent : "rgba(255,255,255,0.4)",
+            fontSize: showPronunciation ? 14 : 20, cursor: "pointer", padding: 0,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: showPronunciation ? `0 0 16px ${theme.glow}` : "none", transition: "all 0.2s",
+          }}>
+            {showPronunciation ? "✕" : "🎤"}
+          </button>
+        )}
+      </div>
+
+      {showPronunciation && card && (
+        <PronunciationPanel
+          card={card} theme={theme}
+          onSpeak={() => speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false))}
+          speaking={speaking}
+        />
+      )}
+
+      {/* Action buttons */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 22, alignItems: "center" }}>
+        <button onClick={() => go("prev")} disabled={safeIndex === 0} style={{
+          width: 52, height: 52, borderRadius: "50%",
+          background: "rgba(255,255,255,0.05)", border: "2px solid rgba(255,255,255,0.1)",
+          color: safeIndex === 0 ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.6)",
+          fontSize: 20, cursor: safeIndex === 0 ? "not-allowed" : "pointer",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          backdropFilter: "blur(12px)", transition: "all 0.2s",
+          boxShadow: safeIndex === 0 ? "none" : "0 4px 16px rgba(0,0,0,0.3)",
+        }}>←</button>
+
+        <button onClick={markUnknown} style={{
+          padding: "12px 22px", borderRadius: 26,
+          background: "rgba(231,76,60,0.08)", border: "1px solid rgba(231,76,60,0.28)",
+          color: "#e74c3c", fontSize: 13, fontWeight: 700, cursor: "pointer",
+          backdropFilter: "blur(10px)", transition: "all 0.2s",
+        }}>✗ Repasar</button>
+
+        <button onClick={markKnown} style={{
+          padding: "12px 22px", borderRadius: 26,
+          background: theme.glass, border: `1px solid ${theme.border}`,
+          color: theme.accent, fontSize: 13, fontWeight: 700, cursor: "pointer",
+          boxShadow: `0 0 18px ${theme.glow}`,
+          backdropFilter: "blur(10px)", transition: "all 0.2s",
+        }}>✓ Lo sé</button>
+
+        <button onClick={() => go("next")} style={{
+          width: 52, height: 52, borderRadius: "50%",
+          background: "rgba(255,255,255,0.05)", border: "2px solid rgba(255,255,255,0.1)",
+          color: "rgba(255,255,255,0.6)", fontSize: 20, cursor: "pointer",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          backdropFilter: "blur(12px)", transition: "all 0.2s",
+          boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+        }}>→</button>
+      </div>
+
+      {generating && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontSize: 12, color: theme.accent }}>
+          <div style={{ width: 7, height: 7, borderRadius: "50%", background: theme.accent, animation: "speakPulse 0.7s ease infinite alternate", boxShadow: `0 0 6px ${theme.accent}` }} />
+          IA generando más tarjetas...
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 32, marginBottom: 16 }}>
+        {[[known.size, "Aprendidas", theme.accent], [unknown.size, "Repasar", "#e74c3c"], [deck.length, "En mazo", "rgba(255,255,255,0.2)"]].map(([val, label, color]) => (
+          <div key={label} style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 24, fontWeight: 800, color, textShadow: color === theme.accent ? `0 0 12px ${theme.glow}` : "none" }}>{val}</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)" }}>{label}</div>
+          </div>
+        ))}
+      </div>
+
+      <button onClick={loadMoreCards} disabled={generating} style={{
+        background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
+        color: generating ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.2)",
+        padding: "8px 22px", borderRadius: 22, fontSize: 11,
+        cursor: generating ? "not-allowed" : "pointer",
+        backdropFilter: "blur(10px)", transition: "all 0.2s",
+      }}>
+        {generating ? "Generando..." : "⟳ Generar más tarjetas"}
+      </button>
+
+      <div style={{ marginTop: 24, fontSize: 10, color: "rgba(255,255,255,0.06)", letterSpacing: 4, textTransform: "uppercase" }}>
+        Deutsch Lernen · Gemini · {level} · {category}
+      </div>
 
       <style>{`
         * { box-sizing: border-box; }
