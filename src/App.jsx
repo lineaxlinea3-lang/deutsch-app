@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef } from "react";
 
 // ─── SEED CARDS ────────────────────────────────────────────────────────────
@@ -95,11 +94,11 @@ const THEME = {
   A2: { accent: "#1e90ff", glow: "rgba(30,144,255,0.3)", glass: "rgba(30,144,255,0.08)", border: "rgba(30,144,255,0.22)", label: "Básico" },
 };
 
-// ─── GEMINI API (VERSIÓN CORREGIDA Y MÁS ROBUSTA) ─────────────────────────────
+// ─── GEMINI API (MODELO ACTUAL 2026) ─────────────────────────────────────
 async function generateCards(level, category, existingFronts = []) {
   const apiKey = process.env.REACT_APP_GEMINI_KEY;
   if (!apiKey) {
-    console.warn("⚠️ No se encontró REACT_APP_GEMINI_KEY en las variables de entorno de Vercel");
+    console.error("❌ No tienes REACT_APP_GEMINI_KEY configurada en Vercel");
     return [];
   }
 
@@ -107,34 +106,28 @@ async function generateCards(level, category, existingFronts = []) {
 
   const prompt = `Genera exactamente 8 tarjetas de alemán para estudiantes hispanohablantes.
 
-Nivel: \( {level} ( \){level === "A1" ? "principiante absoluto" : "básico con algo de base"})
+Nivel: ${level}
 Categoría: ${category}
 ${avoid ? `Evita estas fronts ya usadas: ${avoid}` : ""}
 
-Responde **únicamente** con un JSON válido, sin texto adicional, sin backticks, sin explicaciones.
+Responde ÚNICAMENTE con este JSON, sin texto extra, sin backticks:
 
-Formato exacto:
 {
   "cards": [
     {
       "front": "der Hund",
       "back": "el perro",
       "phonetic": "dair HUNT",
-      "tip": "Plural: Hunde. Artículo masculino."
+      "tip": "Plural: Hunde"
     }
   ]
 }
 
-Reglas estrictas:
-- Incluye artículo der/die/das en sustantivos.
-- Phonetic en MAYÚSCULAS silábicas (ej: dair HUNT).
-- Tip máximo 10 palabras, útil para hispanohablantes.
-- Verbos siempre en primera persona presente (ich ...).
-- Nunca repitas fronts ya usados.`;
+Reglas: artículo der/die/das, phonetic en MAYÚSCULAS, tip corto y útil, verbos en "ich ...".`;
 
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -143,7 +136,7 @@ Reglas estrictas:
           generationConfig: {
             temperature: 0.7,
             maxOutputTokens: 1200,
-            response_mime_type: "application/json",   // ← CLAVE para que Gemini devuelva JSON limpio
+            response_mime_type: "application/json",
           },
         }),
       }
@@ -151,43 +144,33 @@ Reglas estrictas:
 
     if (!res.ok) {
       const errorText = await res.text();
-      console.error("❌ Error HTTP de Gemini:", res.status, errorText);
+      console.error("❌ Error de Gemini (HTTP " + res.status + "):", errorText);
       return [];
     }
 
     const data = await res.json();
-
     let text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
-    if (!text) {
-      console.error("❌ Gemini devolvió respuesta vacía:", data);
-      return [];
-    }
 
-    // Limpieza agresiva
     text = text.replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
 
     let parsed;
     try {
       parsed = JSON.parse(text);
     } catch (e) {
-      console.error("❌ JSON.parse falló. Texto recibido:", text.substring(0, 400));
-      // Último intento con regex
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try { parsed = JSON.parse(jsonMatch[0]); } catch { return []; }
-      } else return [];
+      console.error("❌ JSON inválido. Texto recibido:", text.substring(0, 300));
+      return [];
     }
 
-    const newCards = parsed.cards || parsed || [];
-    console.log(`✅ Gemini generó ${newCards.length} tarjetas nuevas`);
+    const newCards = parsed.cards || [];
+    console.log(`✅ ¡ÉXITO! Gemini generó ${newCards.length} tarjetas nuevas para \( {level}- \){category}`);
     return Array.isArray(newCards) ? newCards : [];
   } catch (e) {
-    console.error("❌ Error al llamar a Gemini:", e);
+    console.error("❌ Error en la llamada a Gemini:", e);
     return [];
   }
 }
 
-// ─── SPEECH y PRONUNCIATION (sin cambios) ───────────────────────────────────
+// ─── SPEECH + PRONUNCIATION (sin cambios) ───────────────────────────────────
 function speakGerman(text, onStart, onEnd) {
   if (!window.speechSynthesis) return;
   window.speechSynthesis.cancel();
@@ -320,7 +303,7 @@ function PronunciationPanel({ card, theme, onSpeak, speaking }) {
   );
 }
 
-// ─── MAIN APP (con correcciones) ─────────────────────────────────────────────
+// ─── MAIN APP ──────────────────────────────────────────────────────────────
 export default function DeutschAI() {
   const [level, setLevel] = useState("A1");
   const [category, setCategory] = useState("Vocabulario");
@@ -344,19 +327,14 @@ export default function DeutschAI() {
 
   useEffect(() => { window.speechSynthesis?.getVoices(); }, []);
 
-  // Reset deck cuando cambia nivel o categoría
   useEffect(() => {
     setDeck(SEED_CARDS[deckKey] || []);
-    setIndex(0);
-    setFlipped(false);
-    setShowTip(false);
-    setKnown(new Set());
-    setUnknown(new Set());
+    setIndex(0); setFlipped(false); setShowTip(false);
+    setKnown(new Set()); setUnknown(new Set());
     setShowPronunciation(false);
     generatingRef.current = false;
   }, [deckKey]);
 
-  // Auto-generar tarjetas cuando el mazo es pequeño o está cerca del final
   useEffect(() => {
     const tooFew = deck.length < 8;
     const nearEnd = deck.length > 0 && index >= deck.length - 4;
@@ -389,9 +367,7 @@ export default function DeutschAI() {
     setTimeout(() => {
       if (dir === "next") setIndex(i => Math.min(i + 1, deck.length - 1));
       else setIndex(i => Math.max(i - 1, 0));
-      setFlipped(false);
-      setShowTip(false);
-      setAnimDir(null);
+      setFlipped(false); setShowTip(false); setAnimDir(null);
     }, 180);
   }
 
@@ -443,7 +419,7 @@ export default function DeutschAI() {
         </div>
       </div>
 
-      {/* Level + Category */}
+      {/* Level selector */}
       <div style={{ display: "flex", gap: 12, marginBottom: 24, alignItems: "flex-start", justifyContent: "center", animation: "fadeDown 0.5s ease 0.1s both" }}>
         {LEVELS.map(l => {
           const t = THEME[l];
@@ -452,22 +428,9 @@ export default function DeutschAI() {
           return (
             <div key={l} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
               {isOpen && (
-                <div style={{
-                  display: "flex", gap: 6, padding: "10px 14px",
-                  background: "rgba(255,255,255,0.92)", borderRadius: 40,
-                  boxShadow: `0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.1)`,
-                  animation: "popUp 0.25s cubic-bezier(.17,.67,.25,1.3)",
-                  position: "relative",
-                }}>
+                <div style={{ display: "flex", gap: 6, padding: "10px 14px", background: "rgba(255,255,255,0.92)", borderRadius: 40, boxShadow: `0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.1)`, animation: "popUp 0.25s cubic-bezier(.17,.67,.25,1.3)", position: "relative" }}>
                   {CATEGORIES.map(c => (
-                    <button key={c} onClick={() => { setLevel(l); setCategory(c); setOpenLevel(null); }} title={c} style={{
-                      width: 48, height: 48, borderRadius: "50%",
-                      background: level === l && category === c ? t.accent : "rgba(0,0,0,0.06)",
-                      border: "none", cursor: "pointer",
-                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1,
-                      transition: "all 0.2s",
-                      transform: level === l && category === c ? "scale(1.1)" : "scale(1)",
-                    }}>
+                    <button key={c} onClick={() => { setLevel(l); setCategory(c); setOpenLevel(null); }} style={{ width: 48, height: 48, borderRadius: "50%", background: level === l && category === c ? t.accent : "rgba(0,0,0,0.06)", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, transition: "all 0.2s", transform: level === l && category === c ? "scale(1.1)" : "scale(1)" }}>
                       <span style={{ fontSize: 20, lineHeight: 1 }}>{CAT_ICONS[c]}</span>
                       <span style={{ fontSize: 7, fontWeight: 700, color: level === l && category === c ? "#fff" : "#555", letterSpacing: 0.3, textTransform: "uppercase" }}>{c.slice(0,4)}</span>
                     </button>
@@ -475,17 +438,7 @@ export default function DeutschAI() {
                   <div style={{ position: "absolute", bottom: -8, left: "50%", transform: "translateX(-50%)", width: 0, height: 0, borderLeft: "8px solid transparent", borderRight: "8px solid transparent", borderTop: "9px solid rgba(255,255,255,0.92)" }} />
                 </div>
               )}
-              <button onClick={() => setOpenLevel(isOpen ? null : l)} style={{
-                padding: "10px 22px", borderRadius: 30,
-                background: isActive ? `linear-gradient(135deg,\( {t.accent}25, \){t.accent}0a)` : "rgba(255,255,255,0.04)",
-                border: `2px solid ${isActive ? t.accent : "rgba(255,255,255,0.1)"}`,
-                color: isActive ? t.accent : "rgba(255,255,255,0.35)",
-                fontSize: 14, fontWeight: 800, cursor: "pointer",
-                boxShadow: isActive ? `0 0 22px ${t.glow}` : "none",
-                transition: "all 0.3s ease",
-                transform: isOpen ? "scale(1.08)" : "scale(1)",
-                backdropFilter: "blur(12px)",
-              }}>
+              <button onClick={() => setOpenLevel(isOpen ? null : l)} style={{ padding: "10px 22px", borderRadius: 30, background: isActive ? `linear-gradient(135deg,\( {t.accent}25, \){t.accent}0a)` : "rgba(255,255,255,0.04)", border: `2px solid ${isActive ? t.accent : "rgba(255,255,255,0.1)"}`, color: isActive ? t.accent : "rgba(255,255,255,0.35)", fontSize: 14, fontWeight: 800, cursor: "pointer", boxShadow: isActive ? `0 0 22px ${t.glow}` : "none", transition: "all 0.3s ease", transform: isOpen ? "scale(1.08)" : "scale(1)", backdropFilter: "blur(12px)" }}>
                 {l}
                 <span style={{ fontSize: 9, opacity: 0.6, marginLeft: 5, display: "block", letterSpacing: 1, textTransform: "uppercase" }}>{t.label}</span>
               </button>
@@ -512,28 +465,7 @@ export default function DeutschAI() {
           <div style={{ fontSize: 13, color: "rgba(255,255,255,0.25)" }}>Cargando tarjetas...</div>
         </div>
       ) : (
-        <div
-          onClick={() => setFlipped(f => !f)}
-          style={{
-            width: "100%", maxWidth: 420, minHeight: 300, borderRadius: 32,
-            background: flipped
-              ? "linear-gradient(135deg,rgba(255,255,255,0.08) 0%,rgba(255,255,255,0.03) 100%)"
-              : "linear-gradient(135deg,rgba(255,255,255,0.06) 0%,rgba(255,255,255,0.02) 100%)",
-            backdropFilter: "blur(30px)", WebkitBackdropFilter: "blur(30px)",
-            border: `1px solid ${flipped ? theme.accent + "55" : "rgba(255,255,255,0.1)"}`,
-            cursor: "pointer",
-            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-            padding: "40px 32px 32px",
-            boxShadow: flipped
-              ? `0 8px 48px ${theme.glow}, inset 0 1px 0 rgba(255,255,255,0.1)`
-              : "0 8px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06)",
-            position: "relative", userSelect: "none",
-            transform: animDir === "next" ? "translateX(60px) scale(0.94)" : animDir === "prev" ? "translateX(-60px) scale(0.94)" : "translateX(0) scale(1)",
-            opacity: animDir ? 0 : 1,
-            transition: "transform 0.18s ease, opacity 0.18s ease, border-color 0.4s, box-shadow 0.4s",
-            marginBottom: 14,
-          }}
-        >
+        <div onClick={() => setFlipped(f => !f)} style={{ width: "100%", maxWidth: 420, minHeight: 300, borderRadius: 32, background: flipped ? "linear-gradient(135deg,rgba(255,255,255,0.08) 0%,rgba(255,255,255,0.03) 100%)" : "linear-gradient(135deg,rgba(255,255,255,0.06) 0%,rgba(255,255,255,0.02) 100%)", backdropFilter: "blur(30px)", border: `1px solid ${flipped ? theme.accent + "55" : "rgba(255,255,255,0.1)"}`, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 32px 32px", boxShadow: flipped ? `0 8px 48px ${theme.glow}, inset 0 1px 0 rgba(255,255,255,0.1)` : "0 8px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06)", position: "relative", userSelect: "none", transform: animDir === "next" ? "translateX(60px) scale(0.94)" : animDir === "prev" ? "translateX(-60px) scale(0.94)" : "translateX(0) scale(1)", opacity: animDir ? 0 : 1, transition: "transform 0.18s ease, opacity 0.18s ease, border-color 0.4s, box-shadow 0.4s", marginBottom: 14 }}>
           <div style={{ position: "absolute", top: 16, left: 20, fontSize: 10, color: "rgba(255,255,255,0.22)", letterSpacing: 2, textTransform: "uppercase" }}>
             {CAT_ICONS[category]} {category}
           </div>
@@ -547,13 +479,7 @@ export default function DeutschAI() {
                 {card.front}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4 }}>
-                <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} title="Escuchar" style={{
-                  width: 44, height: 44, borderRadius: "50%",
-                  background: speaking ? theme.glass : "rgba(255,255,255,0.06)",
-                  border: `2px solid ${speaking ? theme.accent : "rgba(255,255,255,0.12)"}`,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  cursor: "pointer", boxShadow: speaking ? `0 0 20px ${theme.glow}` : "none", transition: "all 0.25s",
-                }}>
+                <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} style={{ width: 44, height: 44, borderRadius: "50%", background: speaking ? theme.glass : "rgba(255,255,255,0.06)", border: `2px solid ${speaking ? theme.accent : "rgba(255,255,255,0.12)"}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: speaking ? `0 0 20px ${theme.glow}` : "none", transition: "all 0.25s" }}>
                   <span style={{ fontSize: 20, animation: speaking ? "speakPulse 0.6s ease infinite alternate" : "none" }}>🔊</span>
                 </button>
                 <span style={{ fontSize: 12, color: "rgba(255,255,255,0.28)", fontStyle: "italic" }}>{card.phonetic}</span>
@@ -564,14 +490,7 @@ export default function DeutschAI() {
               <div style={{ fontSize: 36, fontWeight: 700, color: theme.accent, marginBottom: 14, lineHeight: 1.2, textShadow: `0 0 30px ${theme.glow}` }}>
                 {card.back}
               </div>
-              <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} title="Escuchar" style={{
-                width: 40, height: 40, borderRadius: "50%",
-                background: speaking ? theme.glass : "rgba(255,255,255,0.05)",
-                border: `2px solid ${speaking ? theme.accent : "rgba(255,255,255,0.1)"}`,
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                cursor: "pointer", marginBottom: showTip ? 12 : 0, transition: "all 0.2s",
-                boxShadow: speaking ? `0 0 16px ${theme.glow}` : "none",
-              }}>
+              <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} style={{ width: 40, height: 40, borderRadius: "50%", background: speaking ? theme.glass : "rgba(255,255,255,0.05)", border: `2px solid ${speaking ? theme.accent : "rgba(255,255,255,0.1)"}`, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", marginBottom: showTip ? 12 : 0, transition: "all 0.2s", boxShadow: speaking ? `0 0 16px ${theme.glow}` : "none" }}>
                 <span style={{ fontSize: 18, animation: speaking ? "speakPulse 0.6s ease infinite alternate" : "none" }}>🔊</span>
               </button>
               {showTip && (
@@ -588,76 +507,28 @@ export default function DeutschAI() {
         </div>
       )}
 
-      {/* Toggles */}
+      {/* Toggles y PronunciationPanel (igual que antes) */}
       <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", justifyContent: "center" }}>
         {flipped && card && (
-          <button onClick={() => setShowTip(s => !s)} style={{
-            background: showTip ? theme.glass : "transparent",
-            border: `1px solid ${showTip ? theme.accent : "rgba(255,255,255,0.08)"}`,
-            color: showTip ? theme.accent : "rgba(255,255,255,0.28)",
-            padding: "6px 16px", borderRadius: 20, fontSize: 11, cursor: "pointer", transition: "all 0.2s",
-          }}>
+          <button onClick={() => setShowTip(s => !s)} style={{ background: showTip ? theme.glass : "transparent", border: `1px solid ${showTip ? theme.accent : "rgba(255,255,255,0.08)"}`, color: showTip ? theme.accent : "rgba(255,255,255,0.28)", padding: "6px 16px", borderRadius: 20, fontSize: 11, cursor: "pointer", transition: "all 0.2s" }}>
             {showTip ? "Ocultar consejo" : "💡 Ver consejo"}
           </button>
         )}
         {card && (
-          <button onClick={() => setShowPronunciation(s => !s)} style={{
-            width: 44, height: 44, borderRadius: "50%",
-            background: showPronunciation ? theme.glass : "rgba(255,255,255,0.05)",
-            border: `2px solid ${showPronunciation ? theme.accent : "rgba(255,255,255,0.1)"}`,
-            color: showPronunciation ? theme.accent : "rgba(255,255,255,0.4)",
-            fontSize: showPronunciation ? 14 : 20, cursor: "pointer", padding: 0,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            boxShadow: showPronunciation ? `0 0 16px ${theme.glow}` : "none", transition: "all 0.2s",
-          }}>
+          <button onClick={() => setShowPronunciation(s => !s)} style={{ width: 44, height: 44, borderRadius: "50%", background: showPronunciation ? theme.glass : "rgba(255,255,255,0.05)", border: `2px solid ${showPronunciation ? theme.accent : "rgba(255,255,255,0.1)"}`, color: showPronunciation ? theme.accent : "rgba(255,255,255,0.4)", fontSize: showPronunciation ? 14 : 20, cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: showPronunciation ? `0 0 16px ${theme.glow}` : "none", transition: "all 0.2s" }}>
             {showPronunciation ? "✕" : "🎤"}
           </button>
         )}
       </div>
 
-      {showPronunciation && card && (
-        <PronunciationPanel
-          card={card} theme={theme}
-          onSpeak={() => speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false))}
-          speaking={speaking}
-        />
-      )}
+      {showPronunciation && card && <PronunciationPanel card={card} theme={theme} onSpeak={() => speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false))} speaking={speaking} />}
 
       {/* Action buttons */}
       <div style={{ display: "flex", gap: 10, marginBottom: 22, alignItems: "center" }}>
-        <button onClick={() => go("prev")} disabled={index === 0} style={{
-          width: 52, height: 52, borderRadius: "50%",
-          background: "rgba(255,255,255,0.05)", border: "2px solid rgba(255,255,255,0.1)",
-          color: index === 0 ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.6)",
-          fontSize: 20, cursor: index === 0 ? "not-allowed" : "pointer",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          backdropFilter: "blur(12px)", transition: "all 0.2s",
-          boxShadow: index === 0 ? "none" : "0 4px 16px rgba(0,0,0,0.3)",
-        }}>←</button>
-
-        <button onClick={markUnknown} style={{
-          padding: "12px 22px", borderRadius: 26,
-          background: "rgba(231,76,60,0.08)", border: "1px solid rgba(231,76,60,0.28)",
-          color: "#e74c3c", fontSize: 13, fontWeight: 700, cursor: "pointer",
-          backdropFilter: "blur(10px)", transition: "all 0.2s",
-        }}>✗ Repasar</button>
-
-        <button onClick={markKnown} style={{
-          padding: "12px 22px", borderRadius: 26,
-          background: theme.glass, border: `1px solid ${theme.border}`,
-          color: theme.accent, fontSize: 13, fontWeight: 700, cursor: "pointer",
-          boxShadow: `0 0 18px ${theme.glow}`,
-          backdropFilter: "blur(10px)", transition: "all 0.2s",
-        }}>✓ Lo sé</button>
-
-        <button onClick={() => go("next")} style={{
-          width: 52, height: 52, borderRadius: "50%",
-          background: "rgba(255,255,255,0.05)", border: "2px solid rgba(255,255,255,0.1)",
-          color: "rgba(255,255,255,0.6)", fontSize: 20, cursor: "pointer",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          backdropFilter: "blur(12px)", transition: "all 0.2s",
-          boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
-        }}>→</button>
+        <button onClick={() => go("prev")} disabled={index === 0} style={{ width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,0.05)", border: "2px solid rgba(255,255,255,0.1)", color: index === 0 ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.6)", fontSize: 20, cursor: index === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(12px)", transition: "all 0.2s", boxShadow: index === 0 ? "none" : "0 4px 16px rgba(0,0,0,0.3)" }}>←</button>
+        <button onClick={markUnknown} style={{ padding: "12px 22px", borderRadius: 26, background: "rgba(231,76,60,0.08)", border: "1px solid rgba(231,76,60,0.28)", color: "#e74c3c", fontSize: 13, fontWeight: 700, cursor: "pointer", backdropFilter: "blur(10px)", transition: "all 0.2s" }}>✗ Repasar</button>
+        <button onClick={markKnown} style={{ padding: "12px 22px", borderRadius: 26, background: theme.glass, border: `1px solid ${theme.border}`, color: theme.accent, fontSize: 13, fontWeight: 700, cursor: "pointer", boxShadow: `0 0 18px ${theme.glow}`, backdropFilter: "blur(10px)", transition: "all 0.2s" }}>✓ Lo sé</button>
+        <button onClick={() => go("next")} style={{ width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,0.05)", border: "2px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)", fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(12px)", transition: "all 0.2s", boxShadow: "0 4px 16px rgba(0,0,0,0.3)" }}>→</button>
       </div>
 
       {generating && (
@@ -676,13 +547,7 @@ export default function DeutschAI() {
         ))}
       </div>
 
-      <button onClick={loadMoreCards} disabled={generating} style={{
-        background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
-        color: generating ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.2)",
-        padding: "8px 22px", borderRadius: 22, fontSize: 11,
-        cursor: generating ? "not-allowed" : "pointer",
-        backdropFilter: "blur(10px)", transition: "all 0.2s",
-      }}>
+      <button onClick={loadMoreCards} disabled={generating} style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", color: generating ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.2)", padding: "8px 22px", borderRadius: 22, fontSize: 11, cursor: generating ? "not-allowed" : "pointer", backdropFilter: "blur(10px)", transition: "all 0.2s" }}>
         {generating ? "Generando..." : "⟳ Generar más tarjetas"}
       </button>
 
@@ -704,4 +569,3 @@ export default function DeutschAI() {
     </div>
   );
 }
-</DOCUMENT>
