@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef } from "react";
 
 // ─── SEED CARDS ────────────────────────────────────────────────────────────
@@ -95,7 +94,7 @@ const THEME = {
   A2: { accent: "#1e90ff", glow: "rgba(30,144,255,0.3)", glass: "rgba(30,144,255,0.08)", border: "rgba(30,144,255,0.22)", label: "Básico" },
 };
 
-// ─── GEMINI API (sin cambios) ─────────────────────────────────────────────
+// ─── GEMINI API ────────────────────────────────────────────────────────────
 async function generateCards(level, category, existingFronts = []) {
   const apiKey = process.env.REACT_APP_GEMINI_KEY;
   if (!apiKey) {
@@ -103,9 +102,9 @@ async function generateCards(level, category, existingFronts = []) {
     return [];
   }
 
-  const avoid = existingFronts.slice(-30).join(", ");
+  const avoid = existingFronts.slice(-40).join(", ");
 
-  const prompt = `Genera exactamente 8 tarjetas de alemán para estudiantes hispanohablantes.
+  const prompt = `Genera exactamente 12 tarjetas de alemán para estudiantes hispanohablantes.
 
 Nivel: ${level}
 Categoría: ${category}
@@ -136,7 +135,7 @@ Reglas: artículo der/die/das, phonetic en MAYÚSCULAS, tip corto y útil, verbo
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 1200,
+            maxOutputTokens: 1500,
             response_mime_type: "application/json",
           },
         }),
@@ -154,7 +153,7 @@ Reglas: artículo der/die/das, phonetic en MAYÚSCULAS, tip corto y útil, verbo
 
     const parsed = JSON.parse(text);
     const newCards = parsed.cards || [];
-    console.log(`✅ Gemini generó ${newCards.length} tarjetas para \( {level}- \){category}`);
+    console.log(`✅ Gemini generó ${newCards.length} tarjetas nuevas`);
     return Array.isArray(newCards) ? newCards : [];
   } catch (e) {
     console.error("❌ Error Gemini:", e);
@@ -162,7 +161,7 @@ Reglas: artículo der/die/das, phonetic en MAYÚSCULAS, tip corto y útil, verbo
   }
 }
 
-// ─── SPEECH + PRONUNCIATION (completo) ─────────────────────────────────────
+// ─── SPEECH + PRONUNCIATION ────────────────────────────────────────────────
 function speakGerman(text, onStart, onEnd) {
   if (!window.speechSynthesis) return;
   window.speechSynthesis.cancel();
@@ -295,7 +294,7 @@ function PronunciationPanel({ card, theme, onSpeak, speaking }) {
   );
 }
 
-// ─── MAIN APP (FIX: generación más confiable) ───────────────────────────────
+// ─── MAIN APP ──────────────────────────────────────────────────────────────
 export default function DeutschAI() {
   const [level, setLevel] = useState("A1");
   const [category, setCategory] = useState("Vocabulario");
@@ -337,10 +336,9 @@ export default function DeutschAI() {
     }
   }, [deck.length, index, safeIndex]);
 
-  // FIX: generación más agresiva (últimas 8 tarjetas en vez de 4)
   useEffect(() => {
-    const tooFew = deck.length < 8;
-    const nearEnd = deck.length > 0 && safeIndex >= deck.length - 8;
+    const tooFew = deck.length < 12;
+    const nearEnd = deck.length > 0 && safeIndex >= deck.length - 12;
     if ((tooFew || nearEnd) && !generatingRef.current) {
       loadMoreCards();
     }
@@ -350,13 +348,13 @@ export default function DeutschAI() {
     if (generatingRef.current) return;
     generatingRef.current = true;
     setGenerating(true);
-    console.log(`🔄 Generando más tarjetas para ${deckKey}... (actual: ${deck.length})`);
+    console.log(`🔄 Generando 12 tarjetas más... (actual: ${deck.length})`);
 
     try {
       const newCards = await generateCards(level, category, deck.map(c => c.front));
       if (newCards.length > 0) {
         setDeck(prev => [...prev, ...newCards]);
-        console.log(`✅ Se agregaron ${newCards.length} tarjetas. Total ahora: ${deck.length + newCards.length}`);
+        console.log(`✅ Total ahora: ${deck.length + newCards.length} tarjetas`);
       }
     } catch (e) {
       console.error(e);
@@ -527,7 +525,7 @@ export default function DeutschAI() {
                 {card.front}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4 }}>
-                <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} title="Escuchar" style={{
+                <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} style={{
                   width: 44, height: 44, borderRadius: "50%",
                   background: speaking ? theme.glass : "rgba(255,255,255,0.06)",
                   border: `2px solid ${speaking ? theme.accent : "rgba(255,255,255,0.12)"}`,
@@ -544,7 +542,7 @@ export default function DeutschAI() {
               <div style={{ fontSize: 36, fontWeight: 700, color: theme.accent, marginBottom: 14, lineHeight: 1.2, textShadow: `0 0 30px ${theme.glow}` }}>
                 {card.back}
               </div>
-              <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} title="Escuchar" style={{
+              <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} style={{
                 width: 40, height: 40, borderRadius: "50%",
                 background: speaking ? theme.glass : "rgba(255,255,255,0.05)",
                 border: `2px solid ${speaking ? theme.accent : "rgba(255,255,255,0.1)"}`,
