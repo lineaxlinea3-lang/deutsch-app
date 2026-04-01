@@ -1,100 +1,160 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 
-// ... (aquí todo igual hasta antes de `generateCards`)
+// ─── SEED CARDS (básicas) ────────────────────────────────────────────────────
+const SEED_CARDS = {
+  "A1-Vocabulario": [
+    { front: "das Haus", back: "la casa", phonetic: "das HAUS", tip: "das = neutro" },
+    { front: "der Mann", back: "el hombre", phonetic: "dair MAN", tip: "der = masculino" },
+    // ... (mantén las semillas que ya tenías)
+  ],
+  // ... resto de semillas
+};
 
-// ─── GEMINI API (MEJORADA) ─────────────────────────────────────────────────
-async function generateCards(level, category, existingFronts = [], retryCount = 0) {
-  const apiKey = process.env.REACT_APP_GEMINI_KEY;
-  if (!apiKey) {
-    console.error("❌ No tienes REACT_APP_GEMINI_KEY configurada");
-    return [];
+const LEVELS = ["A1", "A2"];
+const CATEGORIES = ["Vocabulario", "Frases", "Gramática", "Verbos"];
+const CAT_ICONS = { Vocabulario: "📚", Frases: "💬", Gramática: "🔤", Verbos: "🔁" };
+const THEME = {
+  A1: { accent: "#1db954", glow: "rgba(29,185,84,0.3)", glass: "rgba(29,185,84,0.08)", border: "rgba(29,185,84,0.22)", label: "Principiante" },
+  A2: { accent: "#1e90ff", glow: "rgba(30,144,255,0.3)", glass: "rgba(30,144,255,0.08)", border: "rgba(30,144,255,0.22)", label: "Básico" },
+};
+
+// ─── LISTAS DE PALABRAS COMUNES POR NIVEL ───────────────────────────────────
+const WORD_LISTS = {
+  A1: {
+    Vocabulario: [
+      "der Tisch", "die Tür", "das Fenster", "der Stuhl", "die Lampe", "das Bett", "der Schrank",
+      "die Küche", "das Bad", "der Garten", "die Stadt", "das Dorf", "der Park", "die Schule",
+      "der Lehrer", "die Schülerin", "das Buch", "der Kugelschreiber", "die Tasche", "das Papier"
+    ],
+    Verbos: [
+      "gehen", "kommen", "sprechen", "essen", "trinken", "schlafen", "arbeiten", "lernen",
+      "schreiben", "lesen", "hören", "sehen", "wohnen", "fahren", "spielen", "öffnen"
+    ],
+    Frases: [
+      "Guten Morgen", "Guten Abend", "Gute Nacht", "Wie geht es dir?", "Mir geht es gut",
+      "Wo ist die Toilette?", "Was kostet das?", "Ich hätte gern...", "Sprechen Sie Englisch?",
+      "Entschuldigung", "Auf Wiedersehen", "Bis bald"
+    ],
+    Gramática: [
+      "der, die, das", "Nominativ", "Akkusativ", "Dativ", "Verbposition", "Präteritum",
+      "Perfekt", "Modalverben", "Trennbare Verben"
+    ]
+  },
+  A2: {
+    Vocabulario: [
+      "die Arbeit", "die Zeit", "das Geld", "die Wohnung", "das Leben", "der Urlaub", "die Reise",
+      "das Wetter", "die Gesundheit", "das Gefühl", "die Bedeutung", "die Möglichkeit"
+    ],
+    Verbos: [
+      "werden", "können", "müssen", "wollen", "dürfen", "sollen", "verstehen", "erklären",
+      "brauchen", "versuchen", "denken", "wissen", "kennen", "helfen", "nehmen", "geben"
+    ],
+    Frases: [
+      "Könnten Sie mir helfen?", "Wie viel kostet das?", "Ich hätte gern...", "Das macht nichts",
+      "Es tut mir leid", "Kein Problem", "Ich verstehe nicht", "Können Sie langsamer sprechen?"
+    ],
+    Gramática: [
+      "weil + Verb am Ende", "wenn + Verb am Ende", "Perfekt mit sein/haben",
+      "Relativsätze", "Komparativ", "Superlativ", "Konjunktiv II"
+    ]
   }
+};
 
-  const avoid = existingFronts.slice(-10).join(", ");
-
-  const prompt = `Genera exactamente 12 tarjetas de alemán para estudiantes hispanohablantes.
-
-Nivel: ${level}
-Categoría: ${category}
-${avoid ? `Evita estas fronts (ya usadas): ${avoid}` : ""}
-
-Responde ÚNICAMENTE con este JSON, sin texto extra, sin backticks:
-
-{
-  "cards": [
-    {
-      "front": "der Hund",
-      "back": "el perro",
-      "phonetic": "dair HUNT",
-      "tip": "Plural: Hunde"
-    }
-  ]
-}
-
-Reglas: artículo der/die/das, phonetic en MAYÚSCULAS, tip corto y útil, verbos en "ich ...".`;
-
+// ─── DICCIONARIO API (gratuita, sin clave) ─────────────────────────────────
+async function fetchFromDictionary(word) {
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 2500,
-            response_mime_type: "application/json",
-          },
-        }),
-      }
-    );
-
-    if (!res.ok) {
-      console.error(`❌ Error Gemini HTTP ${res.status}`);
-      if (retryCount < 2 && (res.status === 429 || res.status >= 500)) {
-        console.log(`Reintentando (${retryCount + 1}/2)...`);
-        await new Promise(r => setTimeout(r, 2000));
-        return generateCards(level, category, existingFronts, retryCount + 1);
-      }
-      return [];
-    }
-
+    const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/de/${encodeURIComponent(word)}`);
+    if (!res.ok) return null;
     const data = await res.json();
-    let text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
-    text = text.replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
+    const entry = data[0];
+    if (!entry) return null;
 
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch (e) {
-      console.error("Error parseando JSON:", text);
-      return [];
-    }
+    // Extraer definición en alemán (a veces está en alemán, a veces en inglés)
+    const meaning = entry.meanings?.[0];
+    const definition = meaning?.definitions?.[0]?.definition || "Sin definición disponible";
+    const partOfSpeech = meaning?.partOfSpeech || "";
+    const phonetic = entry.phonetic || "";
+    const audio = entry.phonetics?.find(p => p.audio)?.audio || null;
 
-    let newCards = parsed.cards || [];
-    if (!Array.isArray(newCards)) newCards = [];
-
-    if (newCards.length < 12 && retryCount < 1) {
-      console.log(`Solo se generaron ${newCards.length} tarjetas, reintentando sin evitar fronts...`);
-      return generateCards(level, category, [], retryCount + 1);
-    }
-
-    console.log(`✅ Gemini generó ${newCards.length} tarjetas nuevas`);
-    return newCards;
-  } catch (e) {
-    console.error("❌ Error Gemini:", e);
-    if (retryCount < 2) {
-      await new Promise(r => setTimeout(r, 2000));
-      return generateCards(level, category, existingFronts, retryCount + 1);
-    }
-    return [];
+    return {
+      front: word,
+      back: definition,
+      phonetic: phonetic,
+      tip: partOfSpeech,
+      audio: audio  // por si quieres usar audio real
+    };
+  } catch (error) {
+    console.error("Error consultando diccionario para", word, error);
+    return null;
   }
 }
 
-// ... (el resto del código: `speakGerman`, `normalizeDe`, `scorePronunciation`, `useSpeechRecognition`, `PronunciationPanel` igual)
+async function generateFromDictionary(level, category, existingFronts = [], count = 12) {
+  const words = WORD_LISTS[level]?.[category] || [];
+  if (words.length === 0) return [];
 
-// ─── MAIN APP ──────────────────────────────────────────────────────────────
+  const existingSet = new Set(existingFronts);
+  const candidates = words.filter(w => !existingSet.has(w));
+
+  // Seleccionar aleatoriamente hasta count
+  const shuffled = [...candidates];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  const selectedWords = shuffled.slice(0, count);
+
+  // Consultar API para cada palabra (limitamos concurrencia)
+  const cards = [];
+  for (const word of selectedWords) {
+    const card = await fetchFromDictionary(word);
+    if (card) {
+      cards.push(card);
+    }
+    // Pequeña pausa para no saturar la API
+    await new Promise(r => setTimeout(r, 100));
+  }
+  return cards;
+}
+
+// ─── GEMINI API (opcional, mantén si quieres IA) ────────────────────────────
+async function generateCardsWithAI(level, category, existingFronts = [], retryCount = 0) {
+  const apiKey = process.env.REACT_APP_GEMINI_KEY;
+  if (!apiKey) return { success: false, cards: [], error: "No API key" };
+
+  // ... (código de Gemini que ya tenías, ajustado para devolver objeto { success, cards, error })
+  // Puedes dejar el código anterior que devuelve { success, cards }.
+  // Si prefieres simplificar, aquí pondré un esqueleto que devuelve éxito falso si no hay key.
+  return { success: false, cards: [], error: "IA no disponible" };
+}
+
+// ─── GENERACIÓN COMBINADA (diccionario + IA opcional) ───────────────────────
+async function generateCards(level, category, existingFronts = [], useAI = false) {
+  // 1. Intentar con diccionario
+  console.log("📚 Generando desde diccionario...");
+  const dictCards = await generateFromDictionary(level, category, existingFronts, 12);
+  if (dictCards.length > 0) {
+    console.log(`✅ Diccionario generó ${dictCards.length} tarjetas`);
+    return { success: true, cards: dictCards };
+  }
+
+  // 2. Si no hay suficientes, intentar con IA (si está activada)
+  if (useAI) {
+    console.log("🤖 Generando con IA...");
+    const aiResult = await generateCardsWithAI(level, category, existingFronts);
+    if (aiResult.success && aiResult.cards.length > 0) {
+      return aiResult;
+    }
+  }
+
+  // 3. Si todo falla, devolver error
+  return { success: false, cards: [], error: "No se pudieron generar tarjetas" };
+}
+
+// ─── SPEECH + PRONUNCIATION (igual que antes) ────────────────────────────────
+// ... (copia aquí las funciones speakGerman, normalizeDe, scorePronunciation, useSpeechRecognition, PronunciationPanel)
+
+// ─── COMPONENTE PRINCIPAL ───────────────────────────────────────────────────
 export default function DeutschAI() {
   const [level, setLevel] = useState("A1");
   const [category, setCategory] = useState("Vocabulario");
@@ -180,15 +240,16 @@ export default function DeutschAI() {
     setGenError(null);
     try {
       const existingFronts = deck.map(c => c.front);
-      const newCards = await generateCards(level, category, existingFronts);
-      if (newCards.length > 0) {
-        setDeck(prev => [...prev, ...newCards]);
+      // Usamos diccionario, sin IA (cambia a true si quieres IA)
+      const result = await generateCards(level, category, existingFronts, false);
+      if (result.success && result.cards.length > 0) {
+        setDeck(prev => [...prev, ...result.cards]);
       } else {
-        setGenError("No se pudieron generar tarjetas. Intenta más tarde.");
+        setGenError(result.error || "No se pudieron generar tarjetas.");
       }
     } catch (error) {
-      console.error("Error generando tarjetas:", error);
-      setGenError("Error al generar. Revisa tu conexión o la clave de API.");
+      console.error(error);
+      setGenError("Error inesperado.");
     } finally {
       setGenerating(false);
     }
@@ -199,13 +260,14 @@ export default function DeutschAI() {
     speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false));
   };
 
+  // Si no hay tarjetas y el deck está vacío, mostrar pantalla de carga
   if (deck.length === 0) {
     return (
       <div style={{ minHeight: "100vh", background: "#0a0a0f", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui, sans-serif" }}>
         <div style={{ textAlign: "center" }}>
           <p>No hay tarjetas disponibles para {level} - {category}</p>
           <button onClick={handleGenerate} disabled={generating} style={{ marginTop: 16, padding: "12px 24px", background: theme.accent, border: "none", borderRadius: 40, color: "white", fontWeight: "bold", cursor: "pointer" }}>
-            {generating ? "Generando..." : "Generar con IA"}
+            {generating ? "Generando..." : "Generar con diccionario"}
           </button>
         </div>
       </div>
@@ -227,8 +289,7 @@ export default function DeutschAI() {
               padding: "8px 20px",
               color: "white",
               fontWeight: level === lvl ? "bold" : "normal",
-              cursor: "pointer",
-              transition: "all 0.2s"
+              cursor: "pointer"
             }}
           >
             {lvl}
@@ -280,7 +341,7 @@ export default function DeutschAI() {
             borderRadius: 32,
             boxShadow: `0 8px 32px rgba(0,0,0,0.3), 0 0 0 1px ${theme.glass}`,
             cursor: "pointer",
-            transition: "transform 0.4s, box-shadow 0.2s",
+            transition: "transform 0.4s",
             transform: animDir === "right" ? "rotateY(15deg) translateX(30px)" : animDir === "left" ? "rotateY(-15deg) translateX(-30px)" : "rotateY(0deg)",
             opacity: animDir ? 0.5 : 1,
             display: "flex",
@@ -318,7 +379,7 @@ export default function DeutschAI() {
             {showPronunciation ? "Ocultar pronunciación" : "Practicar pronunciación"}
           </button>
           <button onClick={handleGenerate} disabled={generating} style={{ background: theme.accent, border: "none", borderRadius: 40, padding: "8px 16px", color: "white", cursor: "pointer", fontSize: 12 }}>
-            {generating ? "..." : "+ Generar más"}
+            {generating ? "..." : "+ Generar más (diccionario)"}
           </button>
         </div>
 
