@@ -1,13 +1,57 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 
-// ─── SEED CARDS (básicas) ────────────────────────────────────────────────────
+// ========================== DATOS ESTÁTICOS ==========================
 const SEED_CARDS = {
   "A1-Vocabulario": [
     { front: "das Haus", back: "la casa", phonetic: "das HAUS", tip: "das = neutro" },
     { front: "der Mann", back: "el hombre", phonetic: "dair MAN", tip: "der = masculino" },
-    // ... (mantén las semillas que ya tenías)
+    { front: "die Frau", back: "la mujer", phonetic: "dee FRAU", tip: "die = femenino" },
+    { front: "das Kind", back: "el niño/la niña", phonetic: "das KINT", tip: "Plural: Kinder" },
+    { front: "der Hund", back: "el perro", phonetic: "dair HUNT", tip: "Plural: Hunde" },
   ],
-  // ... resto de semillas
+  "A1-Gramática": [
+    { front: "ich bin", back: "yo soy / estoy", phonetic: "ikh BIN", tip: "sein = ser/estar" },
+    { front: "du bist", back: "tú eres", phonetic: "doo BIST", tip: "informal" },
+    { front: "nicht", back: "no (negación)", phonetic: "nikht", tip: "va después del verbo" },
+    { front: "kein / keine", back: "ningún / ninguna", phonetic: "KAIN / KAI-ne", tip: "niega sustantivos" },
+  ],
+  "A1-Frases": [
+    { front: "Guten Morgen!", back: "¡Buenos días!", phonetic: "GOO-ten MOR-gen", tip: "hasta el mediodía" },
+    { front: "Wie heißt du?", back: "¿Cómo te llamas?", phonetic: "vee HAIST doo", tip: "informal" },
+    { front: "Ich heiße...", back: "Me llamo...", phonetic: "ikh HAI-se", tip: "presentarse" },
+    { front: "Danke schön!", back: "¡Muchas gracias!", phonetic: "DAN-ke shön", tip: "ö suena entre e y o" },
+  ],
+  "A1-Verbos": [
+    { front: "ich gehe", back: "yo voy", phonetic: "ikh GAY-e", tip: "gehen = ir" },
+    { front: "ich habe", back: "yo tengo", phonetic: "ikh HA-be", tip: "haben = tener" },
+    { front: "ich mache", back: "yo hago", phonetic: "ikh MA-khe", tip: "machen = hacer" },
+    { front: "ich komme", back: "yo vengo", phonetic: "ikh KO-me", tip: "kommen = venir" },
+  ],
+  "A2-Vocabulario": [
+    { front: "die Arbeit", back: "el trabajo", phonetic: "dee AR-bait", tip: "arbeiten = trabajar" },
+    { front: "die Zeit", back: "el tiempo / la hora", phonetic: "dee TSAIT", tip: "doble significado" },
+    { front: "das Geld", back: "el dinero", phonetic: "das GELT", tip: "muy útil 😄" },
+    { front: "die Wohnung", back: "el apartamento", phonetic: "dee VO-nung", tip: "wohnen = vivir" },
+    { front: "das Leben", back: "la vida", phonetic: "das LAY-ben", tip: "leben = vivir (verbo)" },
+  ],
+  "A2-Gramática": [
+    { front: "weil + Verb am Ende", back: "porque (verbo al final)", phonetic: "VAIL", tip: "weil ich müde bin" },
+    { front: "Perfekt: ich habe gemacht", back: "Pasado: yo hice", phonetic: "ikh HA-be ge-MAKHT", tip: "ge- + participio" },
+    { front: "der / den / dem", back: "el (nominativo/acusativo/dativo)", phonetic: "dair / den / dem", tip: "casos del artículo" },
+    { front: "wenn + Verb am Ende", back: "cuando / si (verbo al final)", phonetic: "VEN", tip: "wenn ich Zeit habe" },
+  ],
+  "A2-Frases": [
+    { front: "Könnten Sie mir helfen?", back: "¿Podría usted ayudarme?", phonetic: "KÖN-ten zee meer HEL-fen", tip: "muy formal y educado" },
+    { front: "Wie viel kostet das?", back: "¿Cuánto cuesta esto?", phonetic: "vee FEEL KOS-tet das", tip: "esencial de compras" },
+    { front: "Ich hätte gern...", back: "Quisiera... (educado)", phonetic: "ikh HE-te gairn", tip: "para pedir en restaurante" },
+    { front: "Das macht nichts.", back: "No importa / No pasa nada.", phonetic: "das MAKHT nikhts", tip: "muy cotidiano" },
+  ],
+  "A2-Verbos": [
+    { front: "ich werde", back: "yo voy a / seré", phonetic: "ikh VER-de", tip: "werden + Infinitiv = futuro" },
+    { front: "ich kann", back: "yo puedo", phonetic: "ikh KAN", tip: "können = poder" },
+    { front: "ich muss", back: "yo debo / tengo que", phonetic: "ikh MUS", tip: "müssen = deber" },
+    { front: "ich will", back: "yo quiero", phonetic: "ikh VIL", tip: "wollen = querer" },
+  ],
 };
 
 const LEVELS = ["A1", "A2"];
@@ -18,7 +62,7 @@ const THEME = {
   A2: { accent: "#1e90ff", glow: "rgba(30,144,255,0.3)", glass: "rgba(30,144,255,0.08)", border: "rgba(30,144,255,0.22)", label: "Básico" },
 };
 
-// ─── LISTAS DE PALABRAS COMUNES POR NIVEL ───────────────────────────────────
+// ========================== WORD LISTS (para el diccionario) ==========================
 const WORD_LISTS = {
   A1: {
     Vocabulario: [
@@ -36,7 +80,7 @@ const WORD_LISTS = {
       "Entschuldigung", "Auf Wiedersehen", "Bis bald"
     ],
     Gramática: [
-      "der, die, das", "Nominativ", "Akkusativ", "Dativ", "Verbposition", "Präteritum",
+      "der", "die", "das", "Nominativ", "Akkusativ", "Dativ", "Verbposition", "Präteritum",
       "Perfekt", "Modalverben", "Trennbare Verben"
     ]
   },
@@ -54,37 +98,120 @@ const WORD_LISTS = {
       "Es tut mir leid", "Kein Problem", "Ich verstehe nicht", "Können Sie langsamer sprechen?"
     ],
     Gramática: [
-      "weil + Verb am Ende", "wenn + Verb am Ende", "Perfekt mit sein/haben",
-      "Relativsätze", "Komparativ", "Superlativ", "Konjunktiv II"
+      "weil", "wenn", "Perfekt", "Relativsätze", "Komparativ", "Superlativ", "Konjunktiv II"
     ]
   }
 };
 
-// ─── DICCIONARIO API (gratuita, sin clave) ─────────────────────────────────
+// Fallback offline (definiciones manuales por si falla la API)
+const FALLBACK_DICT = {
+  "der Tisch": "la mesa",
+  "die Tür": "la puerta",
+  "das Fenster": "la ventana",
+  "der Stuhl": "la silla",
+  "die Lampe": "la lámpara",
+  "das Bett": "la cama",
+  "der Schrank": "el armario",
+  "die Küche": "la cocina",
+  "das Bad": "el baño",
+  "der Garten": "el jardín",
+  "die Stadt": "la ciudad",
+  "das Dorf": "el pueblo",
+  "der Park": "el parque",
+  "die Schule": "la escuela",
+  "der Lehrer": "el profesor",
+  "die Schülerin": "la alumna",
+  "das Buch": "el libro",
+  "der Kugelschreiber": "el bolígrafo",
+  "die Tasche": "la bolsa",
+  "das Papier": "el papel",
+  "gehen": "ir",
+  "kommen": "venir",
+  "sprechen": "hablar",
+  "essen": "comer",
+  "trinken": "beber",
+  "schlafen": "dormir",
+  "arbeiten": "trabajar",
+  "lernen": "aprender",
+  "schreiben": "escribir",
+  "lesen": "leer",
+  "hören": "escuchar",
+  "sehen": "ver",
+  "wohnen": "vivir",
+  "fahren": "conducir/viajar",
+  "spielen": "jugar",
+  "öffnen": "abrir",
+  "werden": "convertirse en / futuro",
+  "können": "poder",
+  "müssen": "deber",
+  "wollen": "querer",
+  "dürfen": "tener permiso",
+  "sollen": "debería",
+  "verstehen": "entender",
+  "erklären": "explicar",
+  "brauchen": "necesitar",
+  "versuchen": "intentar",
+  "denken": "pensar",
+  "wissen": "saber",
+  "kennen": "conocer",
+  "helfen": "ayudar",
+  "nehmen": "tomar",
+  "geben": "dar"
+};
+
+// ========================== DICCIONARIO API ==========================
+function stripArticle(word) {
+  const articles = ["der ", "die ", "das ", "den ", "dem ", "des "];
+  const lower = word.toLowerCase();
+  for (const art of articles) {
+    if (lower.startsWith(art)) {
+      return word.slice(art.length);
+    }
+  }
+  return word;
+}
+
 async function fetchFromDictionary(word) {
+  const clean = stripArticle(word);
   try {
-    const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/de/${encodeURIComponent(word)}`);
-    if (!res.ok) return null;
+    const url = `https://api.dictionaryapi.dev/api/v2/entries/de/${encodeURIComponent(clean)}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.warn(`⚠️ No encontrada en API: ${word} (HTTP ${res.status})`);
+      // Fallback offline
+      if (FALLBACK_DICT[word]) {
+        return {
+          front: word,
+          back: FALLBACK_DICT[word],
+          phonetic: "",
+          tip: "definición manual"
+        };
+      }
+      return null;
+    }
     const data = await res.json();
     const entry = data[0];
     if (!entry) return null;
-
-    // Extraer definición en alemán (a veces está en alemán, a veces en inglés)
-    const meaning = entry.meanings?.[0];
-    const definition = meaning?.definitions?.[0]?.definition || "Sin definición disponible";
-    const partOfSpeech = meaning?.partOfSpeech || "";
+    const definition = entry.meanings?.[0]?.definitions?.[0]?.definition || "Sin definición";
+    const partOfSpeech = entry.meanings?.[0]?.partOfSpeech || "";
     const phonetic = entry.phonetic || "";
-    const audio = entry.phonetics?.find(p => p.audio)?.audio || null;
-
     return {
       front: word,
       back: definition,
       phonetic: phonetic,
       tip: partOfSpeech,
-      audio: audio  // por si quieres usar audio real
     };
   } catch (error) {
-    console.error("Error consultando diccionario para", word, error);
+    console.error(`Error consultando ${word}:`, error);
+    // Fallback offline
+    if (FALLBACK_DICT[word]) {
+      return {
+        front: word,
+        back: FALLBACK_DICT[word],
+        phonetic: "",
+        tip: "definición manual"
+      };
+    }
     return null;
   }
 }
@@ -95,66 +222,159 @@ async function generateFromDictionary(level, category, existingFronts = [], coun
 
   const existingSet = new Set(existingFronts);
   const candidates = words.filter(w => !existingSet.has(w));
+  if (candidates.length === 0) return [];
 
-  // Seleccionar aleatoriamente hasta count
+  // Seleccionar aleatorias
   const shuffled = [...candidates];
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
-  const selectedWords = shuffled.slice(0, count);
+  const selected = shuffled.slice(0, count);
 
-  // Consultar API para cada palabra (limitamos concurrencia)
   const cards = [];
-  for (const word of selectedWords) {
+  for (const word of selected) {
     const card = await fetchFromDictionary(word);
-    if (card) {
-      cards.push(card);
-    }
-    // Pequeña pausa para no saturar la API
-    await new Promise(r => setTimeout(r, 100));
+    if (card) cards.push(card);
+    await new Promise(r => setTimeout(r, 150)); // pequeña pausa
   }
   return cards;
 }
 
-// ─── GEMINI API (opcional, mantén si quieres IA) ────────────────────────────
-async function generateCardsWithAI(level, category, existingFronts = [], retryCount = 0) {
-  const apiKey = process.env.REACT_APP_GEMINI_KEY;
-  if (!apiKey) return { success: false, cards: [], error: "No API key" };
-
-  // ... (código de Gemini que ya tenías, ajustado para devolver objeto { success, cards, error })
-  // Puedes dejar el código anterior que devuelve { success, cards }.
-  // Si prefieres simplificar, aquí pondré un esqueleto que devuelve éxito falso si no hay key.
-  return { success: false, cards: [], error: "IA no disponible" };
+// ========================== PRONUNCIACIÓN ==========================
+function speakGerman(text, onStart, onEnd) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = "de-DE"; utter.rate = 0.82; utter.pitch = 1.0;
+  const voices = window.speechSynthesis.getVoices();
+  const deVoice = voices.find(v => v.lang.startsWith("de"));
+  if (deVoice) utter.voice = deVoice;
+  utter.onstart = () => onStart?.();
+  utter.onend = () => onEnd?.();
+  utter.onerror = () => onEnd?.();
+  window.speechSynthesis.speak(utter);
 }
 
-// ─── GENERACIÓN COMBINADA (diccionario + IA opcional) ───────────────────────
-async function generateCards(level, category, existingFronts = [], useAI = false) {
-  // 1. Intentar con diccionario
-  console.log("📚 Generando desde diccionario...");
-  const dictCards = await generateFromDictionary(level, category, existingFronts, 12);
-  if (dictCards.length > 0) {
-    console.log(`✅ Diccionario generó ${dictCards.length} tarjetas`);
-    return { success: true, cards: dictCards };
-  }
+function normalizeDe(str) {
+  return str.toLowerCase()
+    .replace(/[!?.,;:¡¿]/g, "")
+    .replace(/ß/g, "ss").replace(/ä/g, "a").replace(/ö/g, "o").replace(/ü/g, "u")
+    .trim();
+}
 
-  // 2. Si no hay suficientes, intentar con IA (si está activada)
-  if (useAI) {
-    console.log("🤖 Generando con IA...");
-    const aiResult = await generateCardsWithAI(level, category, existingFronts);
-    if (aiResult.success && aiResult.cards.length > 0) {
-      return aiResult;
+function scorePronunciation(expected, heard) {
+  const exp = normalizeDe(expected), got = normalizeDe(heard);
+  if (exp === got) return { score: 100, label: "¡Perfecto!", color: "#1db954", emoji: "🏆" };
+  const expW = exp.split(" "), gotW = got.split(" ");
+  let matched = 0;
+  expW.forEach(w => { if (gotW.includes(w)) matched++; });
+  let charScore = 0;
+  const minLen = Math.min(exp.length, got.length);
+  for (let i = 0; i < minLen; i++) { if (exp[i] === got[i]) charScore++; }
+  const final = Math.round((matched / expW.length * 0.6 + charScore / Math.max(exp.length, got.length) * 0.4) * 100);
+  if (final >= 85) return { score: final, label: "¡Muy bien!", color: "#1db954", emoji: "✅" };
+  if (final >= 65) return { score: final, label: "Casi, sigue practicando", color: "#f5a623", emoji: "👍" };
+  if (final >= 40) return { score: final, label: "Sigue intentando", color: "#ff6b00", emoji: "💪" };
+  return { score: final, label: "Inténtalo de nuevo", color: "#e74c3c", emoji: "🔄" };
+}
+
+function useSpeechRecognition() {
+  const ref = useRef(null);
+  const [listening, setListening] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  const [supported, setSupported] = useState(true);
+  useEffect(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { setSupported(false); return; }
+    const r = new SR();
+    r.lang = "de-DE"; r.continuous = false; r.interimResults = false; r.maxAlternatives = 3;
+    r.onresult = (e) => { setTranscript(e.results[0][0].transcript); setListening(false); };
+    r.onerror = () => setListening(false);
+    r.onend = () => setListening(false);
+    ref.current = r;
+  }, []);
+  const start = () => { if (!ref.current) return; setTranscript(""); setListening(true); try { ref.current.start(); } catch { setListening(false); } };
+  const stop = () => { ref.current?.stop(); setListening(false); };
+  return { listening, transcript, supported, start, stop };
+}
+
+function PronunciationPanel({ card, theme, onSpeak, speaking }) {
+  const { listening, transcript, supported, start, stop } = useSpeechRecognition();
+  const [result, setResult] = useState(null);
+  const [attempts, setAttempts] = useState(0);
+
+  useEffect(() => { setResult(null); setAttempts(0); }, [card?.front]);
+  useEffect(() => {
+    if (transcript && card) {
+      setResult({ ...scorePronunciation(card.front, transcript), heard: transcript });
+      setAttempts(a => a + 1);
     }
-  }
+  }, [transcript, card]);
 
-  // 3. Si todo falla, devolver error
-  return { success: false, cards: [], error: "No se pudieron generar tarjetas" };
+  if (!supported) return (
+    <div style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${theme.border}`, borderRadius: 16, padding: "12px 16px", fontSize: 12, color: "rgba(255,255,255,0.35)", textAlign: "center", marginBottom: 12, width: "100%", maxWidth: 400 }}>
+      🎤 Usa Chrome o Edge para reconocimiento de voz
+    </div>
+  );
+
+  return (
+    <div style={{ background: "rgba(255,255,255,0.04)", backdropFilter: "blur(20px)", border: `1px solid ${theme.border}`, borderRadius: 20, overflow: "hidden", marginBottom: 14, width: "100%", maxWidth: 400 }}>
+      <div style={{ padding: "10px 16px 8px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", letterSpacing: 2, textTransform: "uppercase" }}>🎤 Pronunciación</span>
+        {attempts > 0 && <span style={{ fontSize: 10, color: theme.accent }}>{attempts} intento{attempts > 1 ? "s" : ""}</span>}
+      </div>
+      <div style={{ padding: "12px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <div style={{ width: 22, height: 22, borderRadius: "50%", background: theme.glass, border: `1px solid ${theme.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: theme.accent, flexShrink: 0 }}>1</div>
+          <span style={{ flex: 1, fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Escucha la pronunciación</span>
+          <button onClick={(e) => { e.stopPropagation(); onSpeak(); }} style={{ background: speaking ? theme.glass : "rgba(255,255,255,0.04)", border: `1px solid ${speaking ? theme.accent : "rgba(255,255,255,0.1)"}`, borderRadius: 20, padding: "6px 14px", display: "flex", alignItems: "center", gap: 6, cursor: "pointer", boxShadow: speaking ? `0 0 14px ${theme.glow}` : "none", transition: "all 0.2s" }}>
+            <span style={{ fontSize: 14, animation: speaking ? "speakPulse 0.6s ease infinite alternate" : "none" }}>🔊</span>
+            <span style={{ fontSize: 11, color: speaking ? theme.accent : "rgba(255,255,255,0.35)" }}>{speaking ? "..." : "Escuchar"}</span>
+          </button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: listening ? 10 : 0 }}>
+          <div style={{ width: 22, height: 22, borderRadius: "50%", background: theme.glass, border: `1px solid ${theme.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: theme.accent, flexShrink: 0 }}>2</div>
+          <span style={{ flex: 1, fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Repite en voz alta</span>
+          <button onClick={(e) => { e.stopPropagation(); listening ? stop() : start(); }} style={{ background: listening ? "rgba(231,76,60,0.12)" : "rgba(255,255,255,0.04)", border: `1px solid ${listening ? "#e74c3c" : "rgba(255,255,255,0.1)"}`, borderRadius: 20, padding: "6px 14px", display: "flex", alignItems: "center", gap: 6, cursor: "pointer", boxShadow: listening ? "0 0 16px rgba(231,76,60,0.4)" : "none", transition: "all 0.2s" }}>
+            <span style={{ fontSize: 14, animation: listening ? "speakPulse 0.5s ease infinite alternate" : "none" }}>🎙️</span>
+            <span style={{ fontSize: 11, color: listening ? "#e74c3c" : "rgba(255,255,255,0.35)" }}>{listening ? "Escuchando..." : "Hablar"}</span>
+          </button>
+        </div>
+        {listening && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 3, height: 26, marginBottom: 10 }}>
+            {[...Array(14)].map((_, i) => (
+              <div key={i} style={{ width: 3, borderRadius: 2, background: "#e74c3c", animation: `wave 0.${4 + (i % 5)}s ease infinite alternate`, animationDelay: `${i * 0.06}s` }} />
+            ))}
+          </div>
+        )}
+        {result && !listening && (
+          <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 14, padding: "12px", border: `1px solid ${result.color}25`, marginTop: 10, animation: "slideUp 0.3s ease" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <span style={{ fontSize: 20 }}>{result.emoji}</span>
+              <span style={{ fontSize: 24, fontWeight: 800, color: result.color }}>{result.score}%</span>
+            </div>
+            <div style={{ height: 4, background: "rgba(255,255,255,0.05)", borderRadius: 2, marginBottom: 8, overflow: "hidden" }}>
+              <div style={{ height: "100%", borderRadius: 2, background: result.color, width: `${result.score}%`, transition: "width 1s ease", boxShadow: `0 0 8px ${result.color}` }} />
+            </div>
+            <div style={{ fontSize: 13, color: result.color, fontWeight: 600, marginBottom: 8 }}>{result.label}</div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
+              <div><div style={{ color: "rgba(255,255,255,0.25)", marginBottom: 3 }}>Correcto</div><div style={{ color: "rgba(255,255,255,0.6)" }}>"{card.front}"</div></div>
+              <div style={{ textAlign: "right" }}><div style={{ color: "rgba(255,255,255,0.25)", marginBottom: 3 }}>Escuché</div><div style={{ color: result.score >= 85 ? theme.accent : "rgba(255,255,255,0.4)" }}>"{result.heard}"</div></div>
+            </div>
+            {result.score < 85 && (
+              <button onClick={(e) => { e.stopPropagation(); start(); }} style={{ marginTop: 10, width: "100%", padding: "8px", borderRadius: 10, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer" }}>
+                🔄 Intentar de nuevo
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
-// ─── SPEECH + PRONUNCIATION (igual que antes) ────────────────────────────────
-// ... (copia aquí las funciones speakGerman, normalizeDe, scorePronunciation, useSpeechRecognition, PronunciationPanel)
-
-// ─── COMPONENTE PRINCIPAL ───────────────────────────────────────────────────
+// ========================== COMPONENTE PRINCIPAL ==========================
 export default function DeutschAI() {
   const [level, setLevel] = useState("A1");
   const [category, setCategory] = useState("Vocabulario");
@@ -240,16 +460,15 @@ export default function DeutschAI() {
     setGenError(null);
     try {
       const existingFronts = deck.map(c => c.front);
-      // Usamos diccionario, sin IA (cambia a true si quieres IA)
-      const result = await generateCards(level, category, existingFronts, false);
-      if (result.success && result.cards.length > 0) {
-        setDeck(prev => [...prev, ...result.cards]);
+      const newCards = await generateFromDictionary(level, category, existingFronts, 12);
+      if (newCards.length > 0) {
+        setDeck(prev => [...prev, ...newCards]);
       } else {
-        setGenError(result.error || "No se pudieron generar tarjetas.");
+        setGenError("No se encontraron definiciones para las palabras seleccionadas. Prueba con otro nivel o categoría.");
       }
     } catch (error) {
       console.error(error);
-      setGenError("Error inesperado.");
+      setGenError("Error inesperado al generar tarjetas.");
     } finally {
       setGenerating(false);
     }
@@ -260,7 +479,6 @@ export default function DeutschAI() {
     speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false));
   };
 
-  // Si no hay tarjetas y el deck está vacío, mostrar pantalla de carga
   if (deck.length === 0) {
     return (
       <div style={{ minHeight: "100vh", background: "#0a0a0f", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui, sans-serif" }}>
@@ -276,7 +494,6 @@ export default function DeutschAI() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#0a0a0f", color: "white", fontFamily: "system-ui, -apple-system, sans-serif", padding: "24px 16px" }}>
-      {/* Controles de nivel y categoría */}
       <div style={{ maxWidth: 600, margin: "0 auto 24px", display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
         {LEVELS.map(lvl => (
           <button
@@ -317,7 +534,6 @@ export default function DeutschAI() {
         ))}
       </div>
 
-      {/* Progreso */}
       <div style={{ maxWidth: 500, margin: "0 auto 24px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6 }}>
           <span>Conocidas: {known.size} / {deck.length}</span>
@@ -328,7 +544,6 @@ export default function DeutschAI() {
         </div>
       </div>
 
-      {/* Tarjeta */}
       <div style={{ maxWidth: 500, margin: "0 auto", perspective: 1200 }}>
         <div
           onClick={() => setFlipped(!flipped)}
@@ -370,7 +585,6 @@ export default function DeutschAI() {
           )}
         </div>
 
-        {/* Botones auxiliares */}
         <div style={{ display: "flex", justifyContent: "center", gap: 16, marginTop: 20 }}>
           <button onClick={() => setShowTip(!showTip)} style={{ background: "rgba(255,255,255,0.05)", border: "none", borderRadius: 40, padding: "8px 16px", color: "white", cursor: "pointer", fontSize: 12 }}>
             {showTip ? "Ocultar tip" : "Mostrar tip"}
@@ -395,7 +609,6 @@ export default function DeutschAI() {
           </div>
         )}
 
-        {/* Navegación y botones de known/unknown */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 24, gap: 12 }}>
           <button onClick={prevCard} style={{ background: "rgba(255,255,255,0.05)", border: "none", borderRadius: 60, width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 20 }}>
             ◀
@@ -414,7 +627,6 @@ export default function DeutschAI() {
         </div>
       </div>
 
-      {/* Indicador de posición */}
       <div style={{ textAlign: "center", marginTop: 24, fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
         {safeIndex + 1} / {deck.length}
       </div>
