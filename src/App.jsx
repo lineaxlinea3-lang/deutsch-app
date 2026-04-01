@@ -94,74 +94,50 @@ const THEME = {
   A2: { accent: "#1e90ff", glow: "rgba(30,144,255,0.3)", glass: "rgba(30,144,255,0.08)", border: "rgba(30,144,255,0.22)", label: "Básico" },
 };
 
-// ─── GEMINI API ────────────────────────────────────────────────────────────
+
+// ─── GROQ API (ultrarrápido ~0.5s) ────────────────────────────────────────
 async function generateCards(level, category, existingFronts = []) {
-  const apiKey = process.env.REACT_APP_GEMINI_KEY;
-  if (!apiKey) {
-    console.error("❌ No tienes REACT_APP_GEMINI_KEY configurada en Vercel");
-    return [];
-  }
+  const apiKey = process.env.REACT_APP_GROQ_KEY;
+  if (!apiKey) { console.warn("Set REACT_APP_GROQ_KEY in Vercel."); return []; }
 
-  const avoid = existingFronts.slice(-40).join(", ");
-
-  const prompt = `Genera exactamente 12 tarjetas de alemán para estudiantes hispanohablantes.
-
-Nivel: ${level}
+  const avoid = existingFronts.slice(-20).join(", ");
+  const prompt = `Genera exactamente 8 tarjetas de alemán para estudiantes hispanohablantes.
+Nivel: ${level} (${level === "A1" ? "principiante absoluto" : "básico"})
 Categoría: ${category}
-${avoid ? `Evita estas fronts ya usadas: ${avoid}` : ""}
-
-Responde ÚNICAMENTE con este JSON, sin texto extra, sin backticks:
-
-{
-  "cards": [
-    {
-      "front": "der Hund",
-      "back": "el perro",
-      "phonetic": "dair HUNT",
-      "tip": "Plural: Hunde"
-    }
-  ]
-}
-
-Reglas: artículo der/die/das, phonetic en MAYÚSCULAS, tip corto y útil, verbos en "ich ...".`;
+${avoid ? `Evita estas ya usadas: ${avoid}` : ""}
+Responde SOLO el JSON puro sin backticks ni texto extra:
+{"cards":[{"front":"alemán","back":"español","phonetic":"fonética silábica","tip":"consejo corto"}]}
+Reglas: incluye artículo der/die/das en sustantivos, phonetic en MAYÚSCULAS silábicas, tip máximo 8 palabras. Para Verbos: primera persona presente.`;
 
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 1500,
-            response_mime_type: "application/json",
-          },
-        }),
-      }
-    );
-
-    if (!res.ok) {
-      console.error("❌ Error Gemini HTTP", res.status);
-      return [];
-    }
-
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "llama-3.1-8b-instant",
+        messages: [
+          { role: "system", content: "Eres experto en alemán. Responde SOLO con JSON válido, sin texto extra ni backticks." },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 1024,
+      }),
+    });
     const data = await res.json();
-    let text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
-    text = text.replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
-
-    const parsed = JSON.parse(text);
-    const newCards = parsed.cards || [];
-    console.log(`✅ Gemini generó ${newCards.length} tarjetas nuevas`);
-    return Array.isArray(newCards) ? newCards : [];
+    if (data.error) { console.error("Groq error:", data.error.message); return []; }
+    const text = data.choices?.[0]?.message?.content || "";
+    const clean = text.replace(/```json|```/g, "").trim();
+    return JSON.parse(clean).cards || [];
   } catch (e) {
-    console.error("❌ Error Gemini:", e);
+    console.error("Error Groq:", e);
     return [];
   }
 }
 
-// ─── SPEECH + PRONUNCIATION ────────────────────────────────────────────────
+// ─── SPEECH ────────────────────────────────────────────────────────────────
 function speakGerman(text, onStart, onEnd) {
   if (!window.speechSynthesis) return;
   window.speechSynthesis.cancel();
@@ -176,6 +152,7 @@ function speakGerman(text, onStart, onEnd) {
   window.speechSynthesis.speak(utter);
 }
 
+// ─── PRONUNCIATION ─────────────────────────────────────────────────────────
 function normalizeDe(str) {
   return str.toLowerCase()
     .replace(/[!?.,;:¡¿]/g, "")
@@ -214,11 +191,12 @@ function useSpeechRecognition() {
     r.onend = () => setListening(false);
     ref.current = r;
   }, []);
-  const start = () => { if (!ref.current) return; setTranscript(""); setListening(true); try { ref.current.start(); } catch { setListening(false); } };
+  const start = () => { if (!ref.current) return; setTranscript(""); setListening(true); try { ref.current.start(); } catch (e) { setListening(false); } };
   const stop = () => { ref.current?.stop(); setListening(false); };
   return { listening, transcript, supported, start, stop };
 }
 
+// ─── PRONUNCIATION PANEL ───────────────────────────────────────────────────
 function PronunciationPanel({ card, theme, onSpeak, speaking }) {
   const { listening, transcript, supported, start, stop } = useSpeechRecognition();
   const [result, setResult] = useState(null);
@@ -230,7 +208,7 @@ function PronunciationPanel({ card, theme, onSpeak, speaking }) {
       setResult({ ...scorePronunciation(card.front, transcript), heard: transcript });
       setAttempts(a => a + 1);
     }
-  }, [transcript, card]);
+  }, [transcript]);
 
   if (!supported) return (
     <div style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${theme.border}`, borderRadius: 16, padding: "12px 16px", fontSize: 12, color: "rgba(255,255,255,0.35)", textAlign: "center", marginBottom: 12, width: "100%", maxWidth: 400 }}>
@@ -245,6 +223,7 @@ function PronunciationPanel({ card, theme, onSpeak, speaking }) {
         {attempts > 0 && <span style={{ fontSize: 10, color: theme.accent }}>{attempts} intento{attempts > 1 ? "s" : ""}</span>}
       </div>
       <div style={{ padding: "12px 16px" }}>
+        {/* Step 1 */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
           <div style={{ width: 22, height: 22, borderRadius: "50%", background: theme.glass, border: `1px solid ${theme.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: theme.accent, flexShrink: 0 }}>1</div>
           <span style={{ flex: 1, fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Escucha la pronunciación</span>
@@ -253,6 +232,7 @@ function PronunciationPanel({ card, theme, onSpeak, speaking }) {
             <span style={{ fontSize: 11, color: speaking ? theme.accent : "rgba(255,255,255,0.35)" }}>{speaking ? "..." : "Escuchar"}</span>
           </button>
         </div>
+        {/* Step 2 */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: listening ? 10 : 0 }}>
           <div style={{ width: 22, height: 22, borderRadius: "50%", background: theme.glass, border: `1px solid ${theme.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: theme.accent, flexShrink: 0 }}>2</div>
           <span style={{ flex: 1, fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Repite en voz alta</span>
@@ -261,13 +241,15 @@ function PronunciationPanel({ card, theme, onSpeak, speaking }) {
             <span style={{ fontSize: 11, color: listening ? "#e74c3c" : "rgba(255,255,255,0.35)" }}>{listening ? "Escuchando..." : "Hablar"}</span>
           </button>
         </div>
+        {/* Waveform */}
         {listening && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 3, height: 26, marginBottom: 10 }}>
             {[...Array(14)].map((_, i) => (
-              <div key={i} style={{ width: 3, borderRadius: 2, background: "#e74c3c", animation: `wave 0.\( {4 + (i % 5)}s ease infinite alternate`, animationDelay: ` \){i * 0.06}s` }} />
+              <div key={i} style={{ width: 3, borderRadius: 2, background: "#e74c3c", animation: `wave 0.${4 + (i % 5)}s ease infinite alternate`, animationDelay: `${i * 0.06}s` }} />
             ))}
           </div>
         )}
+        {/* Result */}
         {result && !listening && (
           <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 14, padding: "12px", border: `1px solid ${result.color}25`, marginTop: 10, animation: "slideUp 0.3s ease" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -311,57 +293,39 @@ export default function DeutschAI() {
   const [openLevel, setOpenLevel] = useState(null);
   const generatingRef = useRef(false);
 
-  const deckKey = `\( {level}- \){category}`;
+  const deckKey = `${level}-${category}`;
   const theme = THEME[level];
-
-  const safeIndex = Math.max(0, Math.min(index, deck.length - 1));
-  const card = deck[safeIndex];
-
+  const card = deck[index];
   const progress = deck.length > 0 ? (known.size / deck.length) * 100 : 0;
 
+  // Preload voices
   useEffect(() => { window.speechSynthesis?.getVoices(); }, []);
 
+  // Reset deck when level or category changes
   useEffect(() => {
     setDeck(SEED_CARDS[deckKey] || []);
-    setIndex(0);
-    setFlipped(false); setShowTip(false);
+    setIndex(0); setFlipped(false); setShowTip(false);
     setKnown(new Set()); setUnknown(new Set());
     setShowPronunciation(false);
     generatingRef.current = false;
   }, [deckKey]);
 
+  // Auto-generate when deck is small or near end
   useEffect(() => {
-    if (deck.length > 0 && index !== safeIndex) {
-      setIndex(safeIndex);
-    }
-  }, [deck.length, index, safeIndex]);
-
-  useEffect(() => {
-    const tooFew = deck.length < 12;
-    const nearEnd = deck.length > 0 && safeIndex >= deck.length - 12;
-    if ((tooFew || nearEnd) && !generatingRef.current) {
-      loadMoreCards();
-    }
-  }, [deck.length, safeIndex]);
+    const tooFew = deck.length < 8;
+    const nearEnd = deck.length > 0 && index >= deck.length - 6;
+    if ((tooFew || nearEnd) && !generatingRef.current) loadMoreCards();
+  }, [deck.length, index]);
 
   async function loadMoreCards() {
     if (generatingRef.current) return;
     generatingRef.current = true;
     setGenerating(true);
-    console.log(`🔄 Generando 12 tarjetas más... (actual: ${deck.length})`);
-
     try {
       const newCards = await generateCards(level, category, deck.map(c => c.front));
-      if (newCards.length > 0) {
-        setDeck(prev => [...prev, ...newCards]);
-        console.log(`✅ Total ahora: ${deck.length + newCards.length} tarjetas`);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setGenerating(false);
-      generatingRef.current = false;
-    }
+      if (newCards.length > 0) setDeck(prev => [...prev, ...newCards]);
+    } catch (e) { console.error(e); }
+    finally { setGenerating(false); generatingRef.current = false; }
   }
 
   function go(dir) {
@@ -375,15 +339,15 @@ export default function DeutschAI() {
 
   function markKnown() {
     if (!card) return;
-    setKnown(s => new Set([...s, safeIndex]));
-    setUnknown(s => { const n = new Set(s); n.delete(safeIndex); return n; });
+    setKnown(s => new Set([...s, index]));
+    setUnknown(s => { const n = new Set(s); n.delete(index); return n; });
     go("next");
   }
 
   function markUnknown() {
     if (!card) return;
-    setUnknown(s => new Set([...s, safeIndex]));
-    setKnown(s => { const n = new Set(s); n.delete(safeIndex); return n; });
+    setUnknown(s => new Set([...s, index]));
+    setKnown(s => { const n = new Set(s); n.delete(index); return n; });
     go("next");
   }
 
@@ -421,7 +385,7 @@ export default function DeutschAI() {
         </div>
       </div>
 
-      {/* Level + Category */}
+      {/* Level + Category bubble menu */}
       <div style={{ display: "flex", gap: 12, marginBottom: 24, alignItems: "flex-start", justifyContent: "center", animation: "fadeDown 0.5s ease 0.1s both" }}>
         {LEVELS.map(l => {
           const t = THEME[l];
@@ -429,6 +393,7 @@ export default function DeutschAI() {
           const isActive = level === l;
           return (
             <div key={l} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+              {/* Bubble popup */}
               {isOpen && (
                 <div style={{
                   display: "flex", gap: 6, padding: "10px 14px",
@@ -438,7 +403,7 @@ export default function DeutschAI() {
                   position: "relative",
                 }}>
                   {CATEGORIES.map(c => (
-                    <button key={c} onClick={() => { setLevel(l); setCategory(c); setOpenLevel(null); }} style={{
+                    <button key={c} onClick={() => { setLevel(l); setCategory(c); setOpenLevel(null); }} title={c} style={{
                       width: 48, height: 48, borderRadius: "50%",
                       background: level === l && category === c ? t.accent : "rgba(0,0,0,0.06)",
                       border: "none", cursor: "pointer",
@@ -450,12 +415,14 @@ export default function DeutschAI() {
                       <span style={{ fontSize: 7, fontWeight: 700, color: level === l && category === c ? "#fff" : "#555", letterSpacing: 0.3, textTransform: "uppercase" }}>{c.slice(0,4)}</span>
                     </button>
                   ))}
+                  {/* Bubble tail */}
                   <div style={{ position: "absolute", bottom: -8, left: "50%", transform: "translateX(-50%)", width: 0, height: 0, borderLeft: "8px solid transparent", borderRight: "8px solid transparent", borderTop: "9px solid rgba(255,255,255,0.92)" }} />
                 </div>
               )}
+              {/* Level button */}
               <button onClick={() => setOpenLevel(isOpen ? null : l)} style={{
                 padding: "10px 22px", borderRadius: 30,
-                background: isActive ? `linear-gradient(135deg,\( {t.accent}25, \){t.accent}0a)` : "rgba(255,255,255,0.04)",
+                background: isActive ? `linear-gradient(135deg,${t.accent}25,${t.accent}0a)` : "rgba(255,255,255,0.04)",
                 border: `2px solid ${isActive ? t.accent : "rgba(255,255,255,0.1)"}`,
                 color: isActive ? t.accent : "rgba(255,255,255,0.35)",
                 fontSize: 14, fontWeight: 800, cursor: "pointer",
@@ -475,16 +442,16 @@ export default function DeutschAI() {
       {/* Progress bar */}
       <div style={{ width: "100%", maxWidth: 400, marginBottom: 20, animation: "fadeDown 0.5s ease 0.2s both" }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5, fontSize: 11, color: "rgba(255,255,255,0.22)" }}>
-          <span>{card ? `${safeIndex + 1} / ${deck.length}` : "—"}</span>
+          <span>{card ? `${index + 1} / ${deck.length}` : "—"}</span>
           <span style={{ color: theme.accent }}>{known.size} aprendidas</span>
         </div>
         <div style={{ height: 3, background: "rgba(255,255,255,0.05)", borderRadius: 2, overflow: "hidden" }}>
-          <div style={{ height: "100%", borderRadius: 2, background: `linear-gradient(90deg,\( {theme.accent}, \){theme.accent}77)`, width: `${progress}%`, transition: "width 0.6s ease", boxShadow: `0 0 8px ${theme.glow}` }} />
+          <div style={{ height: "100%", borderRadius: 2, background: `linear-gradient(90deg,${theme.accent},${theme.accent}77)`, width: `${progress}%`, transition: "width 0.6s ease", boxShadow: `0 0 8px ${theme.glow}` }} />
         </div>
       </div>
 
       {/* Card */}
-      {deck.length === 0 ? (
+      {!card ? (
         <div style={{ width: "100%", maxWidth: 400, minHeight: 280, borderRadius: 24, ...glassBase, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
           <div style={{ fontSize: 28, animation: "spin 1s linear infinite" }}>⟳</div>
           <div style={{ fontSize: 13, color: "rgba(255,255,255,0.25)" }}>Cargando tarjetas...</div>
@@ -525,7 +492,7 @@ export default function DeutschAI() {
                 {card.front}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4 }}>
-                <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} style={{
+                <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} title="Escuchar" style={{
                   width: 44, height: 44, borderRadius: "50%",
                   background: speaking ? theme.glass : "rgba(255,255,255,0.06)",
                   border: `2px solid ${speaking ? theme.accent : "rgba(255,255,255,0.12)"}`,
@@ -542,7 +509,7 @@ export default function DeutschAI() {
               <div style={{ fontSize: 36, fontWeight: 700, color: theme.accent, marginBottom: 14, lineHeight: 1.2, textShadow: `0 0 30px ${theme.glow}` }}>
                 {card.back}
               </div>
-              <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} style={{
+              <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} title="Escuchar" style={{
                 width: 40, height: 40, borderRadius: "50%",
                 background: speaking ? theme.glass : "rgba(255,255,255,0.05)",
                 border: `2px solid ${speaking ? theme.accent : "rgba(255,255,255,0.1)"}`,
@@ -593,6 +560,7 @@ export default function DeutschAI() {
         )}
       </div>
 
+      {/* Pronunciation Panel */}
       {showPronunciation && card && (
         <PronunciationPanel
           card={card} theme={theme}
@@ -603,14 +571,14 @@ export default function DeutschAI() {
 
       {/* Action buttons */}
       <div style={{ display: "flex", gap: 10, marginBottom: 22, alignItems: "center" }}>
-        <button onClick={() => go("prev")} disabled={safeIndex === 0} style={{
+        <button onClick={() => go("prev")} disabled={index === 0} style={{
           width: 52, height: 52, borderRadius: "50%",
           background: "rgba(255,255,255,0.05)", border: "2px solid rgba(255,255,255,0.1)",
-          color: safeIndex === 0 ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.6)",
-          fontSize: 20, cursor: safeIndex === 0 ? "not-allowed" : "pointer",
+          color: index === 0 ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.6)",
+          fontSize: 20, cursor: index === 0 ? "not-allowed" : "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
           backdropFilter: "blur(12px)", transition: "all 0.2s",
-          boxShadow: safeIndex === 0 ? "none" : "0 4px 16px rgba(0,0,0,0.3)",
+          boxShadow: index === 0 ? "none" : "0 4px 16px rgba(0,0,0,0.3)",
         }}>←</button>
 
         <button onClick={markUnknown} style={{
@@ -638,6 +606,7 @@ export default function DeutschAI() {
         }}>→</button>
       </div>
 
+      {/* Generating indicator */}
       {generating && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontSize: 12, color: theme.accent }}>
           <div style={{ width: 7, height: 7, borderRadius: "50%", background: theme.accent, animation: "speakPulse 0.7s ease infinite alternate", boxShadow: `0 0 6px ${theme.accent}` }} />
@@ -645,6 +614,7 @@ export default function DeutschAI() {
         </div>
       )}
 
+      {/* Stats */}
       <div style={{ display: "flex", gap: 32, marginBottom: 16 }}>
         {[[known.size, "Aprendidas", theme.accent], [unknown.size, "Repasar", "#e74c3c"], [deck.length, "En mazo", "rgba(255,255,255,0.2)"]].map(([val, label, color]) => (
           <div key={label} style={{ textAlign: "center" }}>
