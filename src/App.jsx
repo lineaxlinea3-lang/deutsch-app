@@ -62,7 +62,7 @@ const THEME = {
   A2: { accent: "#1e90ff", glow: "rgba(30,144,255,0.3)", glass: "rgba(30,144,255,0.08)", border: "rgba(30,144,255,0.22)", label: "Básico" },
 };
 
-// ========================== WORD LISTS (para el diccionario) ==========================
+// ========================== WORD LISTS (LISTA FIJA) ==========================
 const WORD_LISTS = {
   A1: {
     Vocabulario: [
@@ -103,7 +103,7 @@ const WORD_LISTS = {
   }
 };
 
-// Fallback offline (definiciones manuales por si falla la API)
+// Fallback manual (definiciones offline)
 const FALLBACK_DICT = {
   "der Tisch": "la mesa",
   "die Tür": "la puerta",
@@ -159,7 +159,7 @@ const FALLBACK_DICT = {
   "geben": "dar"
 };
 
-// ========================== DICCIONARIO API ==========================
+// ========================== FUNCIONES DEL DICCIONARIO ==========================
 function stripArticle(word) {
   const articles = ["der ", "die ", "das ", "den ", "dem ", "des "];
   const lower = word.toLowerCase();
@@ -177,7 +177,6 @@ async function fetchFromDictionary(word) {
     const url = `https://api.dictionaryapi.dev/api/v2/entries/de/${encodeURIComponent(clean)}`;
     const res = await fetch(url);
     if (!res.ok) {
-      console.warn(`⚠️ No encontrada en API: ${word} (HTTP ${res.status})`);
       // Fallback offline
       if (FALLBACK_DICT[word]) {
         return {
@@ -202,8 +201,6 @@ async function fetchFromDictionary(word) {
       tip: partOfSpeech,
     };
   } catch (error) {
-    console.error(`Error consultando ${word}:`, error);
-    // Fallback offline
     if (FALLBACK_DICT[word]) {
       return {
         front: word,
@@ -216,6 +213,7 @@ async function fetchFromDictionary(word) {
   }
 }
 
+// Generar desde lista fija
 async function generateFromDictionary(level, category, existingFronts = [], count = 12) {
   const words = WORD_LISTS[level]?.[category] || [];
   if (words.length === 0) return [];
@@ -224,7 +222,6 @@ async function generateFromDictionary(level, category, existingFronts = [], coun
   const candidates = words.filter(w => !existingSet.has(w));
   if (candidates.length === 0) return [];
 
-  // Seleccionar aleatorias
   const shuffled = [...candidates];
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -236,9 +233,21 @@ async function generateFromDictionary(level, category, existingFronts = [], coun
   for (const word of selected) {
     const card = await fetchFromDictionary(word);
     if (card) cards.push(card);
-    await new Promise(r => setTimeout(r, 150)); // pequeña pausa
+    await new Promise(r => setTimeout(r, 150));
   }
   return cards;
+}
+
+// Obtener palabras aleatorias (API externa)
+async function getRandomGermanWords(count = 15) {
+  try {
+    const res = await fetch(`https://random-word-api.herokuapp.com/word?number=${count}&lang=de`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    console.error("Error obteniendo palabras aleatorias:", error);
+    return [];
+  }
 }
 
 // ========================== PRONUNCIACIÓN ==========================
@@ -460,11 +469,27 @@ export default function DeutschAI() {
     setGenError(null);
     try {
       const existingFronts = deck.map(c => c.front);
-      const newCards = await generateFromDictionary(level, category, existingFronts, 12);
+      // 1. Intentar con lista fija
+      let newCards = await generateFromDictionary(level, category, existingFronts, 12);
+      
+      // 2. Si no hubo, usar palabras aleatorias
+      if (newCards.length === 0) {
+        const randomWords = await getRandomGermanWords(15);
+        for (const word of randomWords) {
+          if (existingFronts.includes(word)) continue;
+          const cardData = await fetchFromDictionary(word);
+          if (cardData) {
+            newCards.push(cardData);
+            if (newCards.length >= 12) break;
+          }
+          await new Promise(r => setTimeout(r, 150));
+        }
+      }
+      
       if (newCards.length > 0) {
         setDeck(prev => [...prev, ...newCards]);
       } else {
-        setGenError("No se encontraron definiciones para las palabras seleccionadas. Prueba con otro nivel o categoría.");
+        setGenError("No se encontraron definiciones. Prueba con otro nivel o categoría, o revisa tu conexión.");
       }
     } catch (error) {
       console.error(error);
