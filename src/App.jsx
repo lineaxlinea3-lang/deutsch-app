@@ -1,7 +1,11 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
-// ─── SEED CARDS (mostradas mientras la IA genera) ──────────────────────────
-const SEED_CARDS = {
+// ─── UNIQUE ID GENERATOR ───────────────────────────────────────────────────
+let _uid = 0;
+const uid = () => `card_${Date.now()}_${++_uid}`;
+
+// ─── SEED CARDS ────────────────────────────────────────────────────────────
+const RAW_SEEDS = {
   "A1-Vocabulario": [
     { front: "das Haus", back: "la casa", phonetic: "das HAUS", tip: "das = neutro" },
     { front: "der Mann", back: "el hombre", phonetic: "dair MAN", tip: "der = masculino" },
@@ -52,6 +56,12 @@ const SEED_CARDS = {
   ],
 };
 
+// Asignar IDs únicos a todas las seed cards
+const SEED_CARDS = {};
+Object.entries(RAW_SEEDS).forEach(([key, cards]) => {
+  SEED_CARDS[key] = cards.map(c => ({ ...c, id: uid() }));
+});
+
 const LEVELS = ["A1", "A2"];
 const CATEGORIES = ["Vocabulario", "Frases", "Gramática", "Verbos"];
 const CAT_ICONS = { Vocabulario: "📚", Frases: "💬", Gramática: "🔤", Verbos: "🔁" };
@@ -60,7 +70,25 @@ const THEME = {
   A2: { accent: "#1e90ff", glow: "rgba(30,144,255,0.3)", glass: "rgba(30,144,255,0.08)", border: "rgba(30,144,255,0.22)", label: "Básico" },
 };
 
-// ─── API CALL → /api/generate (Serverless en Vercel) ──────────────────────
+// ─── LOCALSTORAGE (funciona en Vercel) ────────────────────────────────────
+const STORAGE_KEY = "deutsch-progress-v1";
+
+function loadProgress() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveProgress(data) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.warn("No se pudo guardar progreso:", e);
+  }
+}
+
+// ─── API CALL → /api/generate (SIN TOCAR) ────────────────────────────────
 async function generateCards(level, category, existingFronts = []) {
   try {
     const res = await fetch("/api/generate", {
@@ -68,19 +96,16 @@ async function generateCards(level, category, existingFronts = []) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ level, category, language: "alemán", existingFronts }),
     });
-    if (!res.ok) {
-      console.error("API error:", res.status);
-      return [];
-    }
+    if (!res.ok) throw new Error(`API ${res.status}`);
     const data = await res.json();
-    return data.cards || [];
+    return (data.cards || []).map(c => ({ ...c, id: uid() }));
   } catch (e) {
-    console.error("Error llamando /api/generate:", e);
-    return [];
+    console.error("Error /api/generate:", e);
+    throw e;
   }
 }
 
-// ─── SPEECH ────────────────────────────────────────────────────────────────
+// ─── SPEECH (SIN TOCAR) ───────────────────────────────────────────────────
 function speakGerman(text, onStart, onEnd) {
   if (!window.speechSynthesis) return;
   window.speechSynthesis.cancel();
@@ -95,28 +120,50 @@ function speakGerman(text, onStart, onEnd) {
   window.speechSynthesis.speak(utter);
 }
 
-// ─── PRONUNCIATION ─────────────────────────────────────────────────────────
+// ─── LEVENSHTEIN (de Opus, más preciso) ──────────────────────────────────
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+  return dp[m][n];
+}
+
+// ─── PRONUNCIACIÓN (Levenshtein de Opus, SIN TOCAR lógica base) ──────────
 function normalizeDe(str) {
   return str.toLowerCase()
-    .replace(/[!?.,;:¡¿]/g, "")
-    .replace(/ß/g, "ss").replace(/ä/g, "a").replace(/ö/g, "o").replace(/ü/g, "u")
+    .replace(/[!?.,;:¡¿"']/g, "")
+    .replace(/ß/g, "ss").replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue")
     .trim();
 }
+
 function scorePronunciation(expected, heard) {
   const exp = normalizeDe(expected), got = normalizeDe(heard);
   if (exp === got) return { score: 100, label: "¡Perfecto!", color: "#1db954", emoji: "🏆" };
-  const expW = exp.split(" "), gotW = got.split(" ");
-  let matched = 0;
-  expW.forEach(w => { if (gotW.includes(w)) matched++; });
-  let charScore = 0;
-  const minLen = Math.min(exp.length, got.length);
-  for (let i = 0; i < minLen; i++) { if (exp[i] === got[i]) charScore++; }
-  const final = Math.round((matched / expW.length * 0.6 + charScore / Math.max(exp.length, got.length) * 0.4) * 100);
-  if (final >= 85) return { score: final, label: "¡Muy bien!", color: "#1db954", emoji: "✅" };
-  if (final >= 65) return { score: final, label: "Casi, sigue practicando", color: "#f5a623", emoji: "👍" };
-  if (final >= 40) return { score: final, label: "Sigue intentando", color: "#ff6b00", emoji: "💪" };
+
+  const expWords = exp.split(/\s+/), gotWords = got.split(/\s+/);
+  let wordMatches = 0;
+  expWords.forEach(w => {
+    const bestDist = Math.min(...gotWords.map(gw => levenshtein(w, gw)));
+    if (bestDist <= Math.max(1, Math.floor(w.length * 0.3))) wordMatches++;
+  });
+  const wordScore = expWords.length > 0 ? wordMatches / expWords.length : 0;
+
+  const dist = levenshtein(exp, got);
+  const charScore = 1 - dist / Math.max(exp.length, got.length, 1);
+  const final = Math.round((wordScore * 0.55 + charScore * 0.45) * 100);
+
+  if (final >= 90) return { score: final, label: "¡Excelente!", color: "#1db954", emoji: "🏆" };
+  if (final >= 75) return { score: final, label: "¡Muy bien!", color: "#1db954", emoji: "✅" };
+  if (final >= 55) return { score: final, label: "Casi, sigue practicando", color: "#f5a623", emoji: "👍" };
+  if (final >= 35) return { score: final, label: "Sigue intentando", color: "#ff6b00", emoji: "💪" };
   return { score: final, label: "Inténtalo de nuevo", color: "#e74c3c", emoji: "🔄" };
 }
+
+// ─── SPEECH RECOGNITION (SIN TOCAR) ──────────────────────────────────────
 function useSpeechRecognition() {
   const ref = useRef(null);
   const [listening, setListening] = useState(false);
@@ -137,24 +184,60 @@ function useSpeechRecognition() {
   return { listening, transcript, supported, start, stop };
 }
 
+// ─── TOAST SYSTEM (de Opus) ───────────────────────────────────────────────
+function useToast() {
+  const [toasts, setToasts] = useState([]);
+  const idRef = useRef(0);
+  const show = useCallback((message, type = "info", duration = 3500) => {
+    const id = ++idRef.current;
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), duration);
+  }, []);
+  return { toasts, show };
+}
+
+function ToastContainer({ toasts }) {
+  if (toasts.length === 0) return null;
+  const colors = {
+    error:   { bg: "rgba(239,68,68,0.15)",  border: "rgba(239,68,68,0.3)",  text: "#fca5a5", icon: "✕" },
+    success: { bg: "rgba(29,185,84,0.15)",  border: "rgba(29,185,84,0.3)",  text: "#86efac", icon: "✓" },
+    info:    { bg: "rgba(30,144,255,0.15)", border: "rgba(30,144,255,0.3)", text: "#93c5fd", icon: "ℹ" },
+  };
+  return (
+    <div style={{ position: "fixed", top: 20, left: "50%", transform: "translateX(-50%)", zIndex: 9999, display: "flex", flexDirection: "column", gap: 8, width: "90%", maxWidth: 380 }}>
+      {toasts.map(t => {
+        const c = colors[t.type] || colors.info;
+        return (
+          <div key={t.id} style={{ background: c.bg, border: `1px solid ${c.border}`, borderRadius: 14, padding: "12px 18px", color: c.text, fontSize: 13, fontWeight: 600, backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", boxShadow: "0 8px 32px rgba(0,0,0,0.4)", display: "flex", alignItems: "center", gap: 10, animation: "slideDown 0.3s cubic-bezier(.17,.67,.25,1.2)" }}>
+            <span style={{ fontSize: 14, fontWeight: 800, width: 22, height: 22, borderRadius: "50%", background: c.border, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{c.icon}</span>
+            {t.message}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── PRONUNCIATION PANEL (SIN TOCAR base, + mejoras Opus) ────────────────
 function PronunciationPanel({ card, theme, onSpeak, speaking }) {
   const { listening, transcript, supported, start, stop } = useSpeechRecognition();
   const [result, setResult] = useState(null);
   const [attempts, setAttempts] = useState(0);
-  useEffect(() => { setResult(null); setAttempts(0); }, [card?.front]);
+
+  useEffect(() => { setResult(null); setAttempts(0); }, [card?.id]);
   useEffect(() => {
     if (transcript && card) { setResult({ ...scorePronunciation(card.front, transcript), heard: transcript }); setAttempts(a => a + 1); }
   }, [transcript]);
 
   if (!supported) return (
     <div style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${theme.border}`, borderRadius: 16, padding: "12px 16px", fontSize: 12, color: "rgba(255,255,255,0.35)", textAlign: "center", marginBottom: 12, width: "100%", maxWidth: 420 }}>
-      🎤 Usa Chrome para reconocimiento de voz
+      Usa Chrome para reconocimiento de voz
     </div>
   );
 
   return (
-    <div style={{ background: "rgba(255,255,255,0.04)", backdropFilter: "blur(20px)", border: `1px solid ${theme.border}`, borderRadius: 20, overflow: "hidden", marginBottom: 14, width: "100%", maxWidth: 420, animation: "slideUp 0.3s ease" }}>
-      <div style={{ padding: "10px 16px 8px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", justifyContent: "space-between" }}>
+    <div style={{ background: "rgba(255,255,255,0.04)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", border: `1px solid ${theme.border}`, borderRadius: 20, overflow: "hidden", marginBottom: 14, width: "100%", maxWidth: 420, animation: "slideUp 0.3s ease" }}>
+      <div style={{ padding: "10px 16px 8px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", letterSpacing: 2, textTransform: "uppercase" }}>🎤 Pronunciación</span>
         {attempts > 0 && <span style={{ fontSize: 10, color: theme.accent }}>{attempts} intento{attempts > 1 ? "s" : ""}</span>}
       </div>
@@ -164,7 +247,7 @@ function PronunciationPanel({ card, theme, onSpeak, speaking }) {
           <span style={{ flex: 1, fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Escucha la pronunciación</span>
           <button onClick={(e) => { e.stopPropagation(); onSpeak(); }} style={{ background: speaking ? theme.glass : "rgba(255,255,255,0.04)", border: `1px solid ${speaking ? theme.accent : "rgba(255,255,255,0.1)"}`, borderRadius: 20, padding: "6px 14px", display: "flex", alignItems: "center", gap: 6, cursor: "pointer", transition: "all 0.2s" }}>
             <span style={{ fontSize: 14, animation: speaking ? "speakPulse 0.6s ease infinite alternate" : "none" }}>🔊</span>
-            <span style={{ fontSize: 11, color: speaking ? theme.accent : "rgba(255,255,255,0.35)" }}>{speaking ? "..." : "Escuchar"}</span>
+            <span style={{ fontSize: 11, color: speaking ? theme.accent : "rgba(255,255,255,0.35)" }}>{speaking ? "..." : "Oír"}</span>
           </button>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -172,29 +255,29 @@ function PronunciationPanel({ card, theme, onSpeak, speaking }) {
           <span style={{ flex: 1, fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Repite en voz alta</span>
           <button onClick={(e) => { e.stopPropagation(); listening ? stop() : start(); }} style={{ background: listening ? "rgba(231,76,60,0.12)" : "rgba(255,255,255,0.04)", border: `1px solid ${listening ? "#e74c3c" : "rgba(255,255,255,0.1)"}`, borderRadius: 20, padding: "6px 14px", display: "flex", alignItems: "center", gap: 6, cursor: "pointer", transition: "all 0.2s" }}>
             <span style={{ fontSize: 14, animation: listening ? "speakPulse 0.5s ease infinite alternate" : "none" }}>🎙️</span>
-            <span style={{ fontSize: 11, color: listening ? "#e74c3c" : "rgba(255,255,255,0.35)" }}>{listening ? "Escuchando..." : "Hablar"}</span>
+            <span style={{ fontSize: 11, color: listening ? "#e74c3c" : "rgba(255,255,255,0.35)" }}>{listening ? "Grabando..." : "Hablar"}</span>
           </button>
         </div>
         {listening && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 3, height: 26, marginTop: 10 }}>
-            {[...Array(14)].map((_, i) => <div key={i} style={{ width: 3, borderRadius: 2, background: "#e74c3c", animation: `wave 0.${4 + (i % 5)}s ease infinite alternate`, animationDelay: `${i * 0.06}s` }} />)}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 3, height: 28, marginTop: 10 }}>
+            {[...Array(16)].map((_, i) => <div key={i} style={{ width: 3, borderRadius: 2, background: "#e74c3c", animation: `wave 0.${4 + (i % 5)}s ease infinite alternate`, animationDelay: `${i * 0.05}s` }} />)}
           </div>
         )}
         {result && !listening && (
-          <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 14, padding: "12px", border: `1px solid ${result.color}25`, marginTop: 10 }}>
+          <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 14, padding: "12px", border: `1px solid ${result.color}22`, marginTop: 10 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <span style={{ fontSize: 20 }}>{result.emoji}</span>
               <span style={{ fontSize: 24, fontWeight: 800, color: result.color }}>{result.score}%</span>
             </div>
             <div style={{ height: 4, background: "rgba(255,255,255,0.05)", borderRadius: 2, marginBottom: 8, overflow: "hidden" }}>
-              <div style={{ height: "100%", borderRadius: 2, background: result.color, width: `${result.score}%`, transition: "width 1s ease" }} />
+              <div style={{ height: "100%", borderRadius: 2, background: result.color, width: `${result.score}%`, transition: "width 0.8s ease" }} />
             </div>
             <div style={{ fontSize: 13, color: result.color, fontWeight: 600, marginBottom: 8 }}>{result.label}</div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
-              <div><div style={{ color: "rgba(255,255,255,0.25)", marginBottom: 3 }}>Correcto</div><div style={{ color: "rgba(255,255,255,0.6)" }}>"{card.front}"</div></div>
-              <div style={{ textAlign: "right" }}><div style={{ color: "rgba(255,255,255,0.25)", marginBottom: 3 }}>Escuché</div><div style={{ color: result.score >= 85 ? theme.accent : "rgba(255,255,255,0.4)" }}>"{result.heard}"</div></div>
+              <div><div style={{ color: "rgba(255,255,255,0.25)", marginBottom: 3 }}>Correcto</div><div style={{ color: "rgba(255,255,255,0.6)" }}>{card.front}</div></div>
+              <div style={{ textAlign: "right" }}><div style={{ color: "rgba(255,255,255,0.25)", marginBottom: 3 }}>Escuché</div><div style={{ color: result.score >= 75 ? theme.accent : "rgba(255,255,255,0.4)" }}>{result.heard}</div></div>
             </div>
-            {result.score < 85 && <button onClick={(e) => { e.stopPropagation(); start(); }} style={{ marginTop: 10, width: "100%", padding: "8px", borderRadius: 10, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer" }}>🔄 Intentar de nuevo</button>}
+            {result.score < 75 && <button onClick={(e) => { e.stopPropagation(); start(); }} style={{ marginTop: 10, width: "100%", padding: "8px", borderRadius: 10, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer" }}>🔄 Intentar de nuevo</button>}
           </div>
         )}
       </div>
@@ -202,7 +285,7 @@ function PronunciationPanel({ card, theme, onSpeak, speaking }) {
   );
 }
 
-// ─── MAIN APP ──────────────────────────────────────────────────────────────
+// ─── MAIN APP ─────────────────────────────────────────────────────────────
 export default function DeutschAI() {
   const [level, setLevel] = useState("A1");
   const [category, setCategory] = useState("Vocabulario");
@@ -217,15 +300,40 @@ export default function DeutschAI() {
   const [speaking, setSpeaking] = useState(false);
   const [showPronunciation, setShowPronunciation] = useState(false);
   const [openLevel, setOpenLevel] = useState(null);
+  const [loaded, setLoaded] = useState(false);
   const generatingRef = useRef(false);
+  const touchRef = useRef(null);
+  const { toasts, show: showToast } = useToast();
 
   const deckKey = `${level}-${category}`;
   const theme = THEME[level];
   const card = deck[index] || null;
   const progress = deck.length > 0 ? (known.size / deck.length) * 100 : 0;
 
+  // Preload voices
   useEffect(() => { window.speechSynthesis?.getVoices(); }, []);
 
+  // Load saved progress on mount
+  useEffect(() => {
+    const saved = loadProgress();
+    if (saved?.level) setLevel(saved.level);
+    if (saved?.category) setCategory(saved.category);
+    setLoaded(true);
+  }, []);
+
+  // Save progress when state changes
+  useEffect(() => {
+    if (!loaded) return;
+    saveProgress({
+      level, category,
+      knownCount: known.size,
+      unknownCount: unknown.size,
+      totalCards: deck.length,
+      lastSession: new Date().toISOString(),
+    });
+  }, [level, category, known.size, unknown.size, deck.length, loaded]);
+
+  // Reset deck when level/category changes
   useEffect(() => {
     setDeck(SEED_CARDS[deckKey] || []);
     setIndex(0); setFlipped(false); setShowTip(false);
@@ -247,9 +355,16 @@ export default function DeutschAI() {
     setGenerating(true);
     try {
       const newCards = await generateCards(level, category, deck.map(c => c.front));
-      if (newCards.length > 0) setDeck(prev => [...prev, ...newCards]);
-    } catch (e) { console.error(e); }
-    finally { setGenerating(false); generatingRef.current = false; }
+      if (newCards.length > 0) {
+        setDeck(prev => [...prev, ...newCards]);
+        showToast(`+${newCards.length} tarjetas nuevas`, "success", 2500);
+      }
+    } catch {
+      showToast("No se pudieron generar tarjetas. Revisa tu conexión.", "error", 4000);
+    } finally {
+      setGenerating(false);
+      generatingRef.current = false;
+    }
   }
 
   function go(dir) {
@@ -263,20 +378,43 @@ export default function DeutschAI() {
 
   function markKnown() {
     if (!card) return;
-    setKnown(s => new Set([...s, index]));
-    setUnknown(s => { const n = new Set(s); n.delete(index); return n; });
+    setKnown(s => new Set([...s, card.id]));
+    setUnknown(s => { const n = new Set(s); n.delete(card.id); return n; });
     go("next");
   }
 
   function markUnknown() {
     if (!card) return;
-    setUnknown(s => new Set([...s, index]));
-    setKnown(s => { const n = new Set(s); n.delete(index); return n; });
+    setUnknown(s => new Set([...s, card.id]));
+    setKnown(s => { const n = new Set(s); n.delete(card.id); return n; });
     go("next");
   }
 
+  // Swipe support
+  function handleTouchStart(e) { touchRef.current = e.touches[0].clientX; }
+  function handleTouchEnd(e) {
+    if (touchRef.current === null) return;
+    const diff = e.changedTouches[0].clientX - touchRef.current;
+    if (Math.abs(diff) > 60) {
+      if (diff < 0 && index < deck.length - 1) go("next");
+      else if (diff > 0 && index > 0) go("prev");
+    }
+    touchRef.current = null;
+  }
+
   return (
-    <div style={{ minHeight: "100vh", background: "linear-gradient(145deg,#080810 0%,#0d0d1a 50%,#080f0b 100%)", color: "#fff", fontFamily: "system-ui,sans-serif", display: "flex", flexDirection: "column", alignItems: "center", padding: "28px 16px 52px", position: "relative", overflow: "hidden" }}>
+    <div
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      style={{
+        minHeight: "100vh",
+        background: "linear-gradient(145deg,#080810 0%,#0d0d1a 50%,#080f0b 100%)",
+        color: "#fff", fontFamily: "system-ui,sans-serif",
+        display: "flex", flexDirection: "column", alignItems: "center",
+        padding: "28px 16px 60px", position: "relative", overflow: "hidden",
+      }}
+    >
+      <ToastContainer toasts={toasts} />
 
       {/* Background orbs */}
       <div style={{ position: "fixed", left: "10%", top: "15%", width: 300, height: 300, borderRadius: "50%", background: theme.glow, filter: "blur(80px)", pointerEvents: "none", animation: "orbFloat 7s ease-in-out infinite alternate", opacity: 0.5 }} />
@@ -284,7 +422,7 @@ export default function DeutschAI() {
       <div style={{ position: "fixed", left: "40%", bottom: "10%", width: 180, height: 180, borderRadius: "50%", background: "rgba(120,40,200,0.08)", filter: "blur(60px)", pointerEvents: "none", animation: "orbFloat 11s ease-in-out infinite alternate" }} />
 
       {/* Header */}
-      <div style={{ textAlign: "center", marginBottom: 20, animation: "fadeDown 0.5s ease" }}>
+      <div style={{ textAlign: "center", marginBottom: 20, animation: "fadeDown 0.5s ease", zIndex: 1 }}>
         <div style={{ fontSize: 10, letterSpacing: 5, color: "rgba(255,255,255,0.2)", textTransform: "uppercase", marginBottom: 6 }}>Aprende Alemán · IA</div>
         <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: -1, background: `linear-gradient(135deg,#fff 30%,${theme.accent})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
           Deutsch ∞
@@ -295,7 +433,7 @@ export default function DeutschAI() {
       </div>
 
       {/* Level + Category bubble menu */}
-      <div style={{ display: "flex", gap: 12, marginBottom: 20, alignItems: "flex-start", justifyContent: "center", animation: "fadeDown 0.5s ease 0.1s both" }}>
+      <div style={{ display: "flex", gap: 12, marginBottom: 20, alignItems: "flex-start", justifyContent: "center", animation: "fadeDown 0.5s ease 0.1s both", zIndex: 2 }}>
         {LEVELS.map(l => {
           const t = THEME[l];
           const isOpen = openLevel === l;
@@ -303,14 +441,14 @@ export default function DeutschAI() {
           return (
             <div key={l} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
               {isOpen && (
-                <div style={{ display: "flex", gap: 6, padding: "10px 14px", background: "rgba(255,255,255,0.92)", borderRadius: 40, boxShadow: "0 8px 32px rgba(0,0,0,0.4)", animation: "popUp 0.25s cubic-bezier(.17,.67,.25,1.3)", position: "relative" }}>
+                <div style={{ display: "flex", gap: 6, padding: "10px 14px", background: "rgba(255,255,255,0.93)", borderRadius: 40, boxShadow: "0 8px 40px rgba(0,0,0,0.5)", animation: "popUp 0.25s cubic-bezier(.17,.67,.25,1.3)", position: "relative" }}>
                   {CATEGORIES.map(c => (
-                    <button key={c} onClick={() => { setLevel(l); setCategory(c); setOpenLevel(null); }} title={c} style={{ width: 52, height: 52, borderRadius: "50%", background: level === l && category === c ? t.accent : "rgba(0,0,0,0.07)", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, transition: "all 0.2s", transform: level === l && category === c ? "scale(1.1)" : "scale(1)" }}>
-                      <span style={{ fontSize: 20 }}>{CAT_ICONS[c]}</span>
-                      <span style={{ fontSize: 7, fontWeight: 700, color: level === l && category === c ? "#fff" : "#555", letterSpacing: 0.3, textTransform: "uppercase" }}>{c.slice(0, 4)}</span>
+                    <button key={c} onClick={() => { setLevel(l); setCategory(c); setOpenLevel(null); }} title={c} style={{ width: 50, height: 50, borderRadius: "50%", background: level === l && category === c ? t.accent : "rgba(0,0,0,0.06)", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, transition: "all 0.2s", transform: level === l && category === c ? "scale(1.1)" : "scale(1)" }}>
+                      <span style={{ fontSize: 18 }}>{CAT_ICONS[c]}</span>
+                      <span style={{ fontSize: 7, fontWeight: 700, color: level === l && category === c ? "#fff" : "#555", textTransform: "uppercase" }}>{c.slice(0, 4)}</span>
                     </button>
                   ))}
-                  <div style={{ position: "absolute", bottom: -8, left: "50%", transform: "translateX(-50%)", width: 0, height: 0, borderLeft: "8px solid transparent", borderRight: "8px solid transparent", borderTop: "9px solid rgba(255,255,255,0.92)" }} />
+                  <div style={{ position: "absolute", bottom: -8, left: "50%", transform: "translateX(-50%)", width: 0, height: 0, borderLeft: "8px solid transparent", borderRight: "8px solid transparent", borderTop: "9px solid rgba(255,255,255,0.93)" }} />
                 </div>
               )}
               <button onClick={() => setOpenLevel(isOpen ? null : l)} style={{ padding: "10px 22px", borderRadius: 30, background: isActive ? `linear-gradient(135deg,${t.accent}25,${t.accent}0a)` : "rgba(255,255,255,0.04)", border: `2px solid ${isActive ? t.accent : "rgba(255,255,255,0.1)"}`, color: isActive ? t.accent : "rgba(255,255,255,0.35)", fontSize: 14, fontWeight: 800, cursor: "pointer", boxShadow: isActive ? `0 0 22px ${t.glow}` : "none", transition: "all 0.3s ease", transform: isOpen ? "scale(1.08)" : "scale(1)", backdropFilter: "blur(12px)" }}>
@@ -323,7 +461,7 @@ export default function DeutschAI() {
       </div>
 
       {/* Progress bar */}
-      <div style={{ width: "100%", maxWidth: 420, marginBottom: 16 }}>
+      <div style={{ width: "100%", maxWidth: 420, marginBottom: 16, zIndex: 1 }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5, fontSize: 11, color: "rgba(255,255,255,0.22)" }}>
           <span>{card ? `${index + 1} / ${deck.length}` : "—"}</span>
           <span style={{ color: theme.accent }}>{known.size} aprendidas</span>
@@ -335,7 +473,7 @@ export default function DeutschAI() {
 
       {/* Card */}
       {!card ? (
-        <div style={{ width: "100%", maxWidth: 420, minHeight: 300, borderRadius: 28, background: "rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
+        <div style={{ width: "100%", maxWidth: 420, minHeight: 300, borderRadius: 28, background: "rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, zIndex: 1 }}>
           <div style={{ fontSize: 28, animation: "spin 1s linear infinite" }}>⟳</div>
           <div style={{ fontSize: 13, color: "rgba(255,255,255,0.25)" }}>Cargando...</div>
         </div>
@@ -352,14 +490,21 @@ export default function DeutschAI() {
           transform: animDir === "next" ? "translateX(60px) scale(0.94)" : animDir === "prev" ? "translateX(-60px) scale(0.94)" : "translateX(0) scale(1)",
           opacity: animDir ? 0 : 1,
           transition: "transform 0.18s ease,opacity 0.18s ease,border-color 0.4s,box-shadow 0.4s",
-          marginBottom: 14,
+          marginBottom: 14, zIndex: 1,
         }}>
           <div style={{ position: "absolute", top: 16, left: 20, fontSize: 10, color: "rgba(255,255,255,0.22)", letterSpacing: 2, textTransform: "uppercase" }}>{CAT_ICONS[category]} {category}</div>
           <div style={{ position: "absolute", top: 16, right: 20, fontSize: 10, fontWeight: 700, color: flipped ? theme.accent : "rgba(255,255,255,0.15)", transition: "color 0.3s" }}>{flipped ? "ES" : "DE"}</div>
 
+          {/* Badge aprendida/repasar */}
+          {(known.has(card.id) || unknown.has(card.id)) && (
+            <div style={{ position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)", fontSize: 9, padding: "2px 10px", borderRadius: 10, background: known.has(card.id) ? "rgba(29,185,84,0.12)" : "rgba(231,76,60,0.12)", color: known.has(card.id) ? "#1db954" : "#e74c3c", border: `1px solid ${known.has(card.id) ? "rgba(29,185,84,0.2)" : "rgba(231,76,60,0.2)"}`, fontWeight: 700 }}>
+              {known.has(card.id) ? "Aprendida" : "Repasar"}
+            </div>
+          )}
+
           {!flipped ? (
             <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 42, fontWeight: 800, letterSpacing: -1.5, marginBottom: 18, lineHeight: 1.1, textShadow: `0 0 40px ${theme.glow}` }}>{card.front}</div>
+              <div style={{ fontSize: 40, fontWeight: 800, letterSpacing: -1.5, marginBottom: 18, lineHeight: 1.1, textShadow: `0 0 40px ${theme.glow}` }}>{card.front}</div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
                 <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} style={{ width: 44, height: 44, borderRadius: "50%", background: speaking ? theme.glass : "rgba(255,255,255,0.06)", border: `2px solid ${speaking ? theme.accent : "rgba(255,255,255,0.12)"}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: speaking ? `0 0 20px ${theme.glow}` : "none", transition: "all 0.25s" }}>
                   <span style={{ fontSize: 20, animation: speaking ? "speakPulse 0.6s ease infinite alternate" : "none" }}>🔊</span>
@@ -369,7 +514,7 @@ export default function DeutschAI() {
             </div>
           ) : (
             <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 36, fontWeight: 700, color: theme.accent, marginBottom: 14, lineHeight: 1.2, textShadow: `0 0 30px ${theme.glow}` }}>{card.back}</div>
+              <div style={{ fontSize: 34, fontWeight: 700, color: theme.accent, marginBottom: 14, lineHeight: 1.2, textShadow: `0 0 30px ${theme.glow}` }}>{card.back}</div>
               <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} style={{ width: 40, height: 40, borderRadius: "50%", background: speaking ? theme.glass : "rgba(255,255,255,0.05)", border: `2px solid ${speaking ? theme.accent : "rgba(255,255,255,0.1)"}`, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", marginBottom: showTip ? 12 : 0, transition: "all 0.2s" }}>
                 <span style={{ fontSize: 18, animation: speaking ? "speakPulse 0.6s ease infinite alternate" : "none" }}>🔊</span>
               </button>
@@ -381,7 +526,7 @@ export default function DeutschAI() {
       )}
 
       {/* Toggles */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", justifyContent: "center" }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", justifyContent: "center", zIndex: 1 }}>
         {flipped && card && (
           <button onClick={() => setShowTip(s => !s)} style={{ background: showTip ? theme.glass : "transparent", border: `1px solid ${showTip ? theme.accent : "rgba(255,255,255,0.08)"}`, color: showTip ? theme.accent : "rgba(255,255,255,0.28)", padding: "6px 16px", borderRadius: 20, fontSize: 11, cursor: "pointer", transition: "all 0.2s" }}>
             {showTip ? "Ocultar consejo" : "💡 Ver consejo"}
@@ -399,7 +544,7 @@ export default function DeutschAI() {
       )}
 
       {/* Action buttons */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 22, alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 10, marginBottom: 22, alignItems: "center", zIndex: 1 }}>
         <button onClick={() => go("prev")} disabled={index === 0} style={{ width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,0.05)", border: "2px solid rgba(255,255,255,0.1)", color: index === 0 ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.6)", fontSize: 20, cursor: index === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(12px)", transition: "all 0.2s", boxShadow: "0 4px 16px rgba(0,0,0,0.3)" }}>←</button>
         <button onClick={markUnknown} style={{ padding: "12px 22px", borderRadius: 26, background: "rgba(231,76,60,0.08)", border: "1px solid rgba(231,76,60,0.28)", color: "#e74c3c", fontSize: 13, fontWeight: 700, cursor: "pointer", backdropFilter: "blur(10px)", transition: "all 0.2s" }}>✗ Repasar</button>
         <button onClick={markKnown} style={{ padding: "12px 22px", borderRadius: 26, background: theme.glass, border: `1px solid ${theme.border}`, color: theme.accent, fontSize: 13, fontWeight: 700, cursor: "pointer", boxShadow: `0 0 18px ${theme.glow}`, backdropFilter: "blur(10px)", transition: "all 0.2s" }}>✓ Lo sé</button>
@@ -408,14 +553,14 @@ export default function DeutschAI() {
 
       {/* Generating indicator */}
       {generating && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontSize: 12, color: theme.accent }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontSize: 12, color: theme.accent, zIndex: 1 }}>
           <div style={{ width: 7, height: 7, borderRadius: "50%", background: theme.accent, animation: "speakPulse 0.7s ease infinite alternate" }} />
           Generando más tarjetas...
         </div>
       )}
 
       {/* Stats */}
-      <div style={{ display: "flex", gap: 32, marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 32, marginBottom: 16, zIndex: 1 }}>
         {[[known.size, "Aprendidas", theme.accent], [unknown.size, "Repasar", "#e74c3c"], [deck.length, "Total", "rgba(255,255,255,0.2)"]].map(([val, label, color]) => (
           <div key={label} style={{ textAlign: "center" }}>
             <div style={{ fontSize: 24, fontWeight: 800, color, textShadow: color === theme.accent ? `0 0 12px ${theme.glow}` : "none" }}>{val}</div>
@@ -424,21 +569,22 @@ export default function DeutschAI() {
         ))}
       </div>
 
-      <button onClick={loadMore} disabled={generating} style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", color: generating ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.25)", padding: "8px 22px", borderRadius: 22, fontSize: 11, cursor: generating ? "not-allowed" : "pointer", backdropFilter: "blur(10px)", transition: "all 0.2s" }}>
+      <button onClick={loadMore} disabled={generating} style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", color: generating ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.25)", padding: "8px 22px", borderRadius: 22, fontSize: 11, cursor: generating ? "not-allowed" : "pointer", backdropFilter: "blur(10px)", transition: "all 0.2s", zIndex: 1 }}>
         {generating ? "Generando..." : "⟳ Generar más tarjetas"}
       </button>
 
-      <div style={{ marginTop: 20, fontSize: 10, color: "rgba(255,255,255,0.06)", letterSpacing: 4, textTransform: "uppercase" }}>
-        Deutsch Lernen · IA · {level} · {category}
+      <div style={{ marginTop: 20, fontSize: 10, color: "rgba(255,255,255,0.06)", letterSpacing: 4, textTransform: "uppercase", zIndex: 1 }}>
+        Deutsch ∞ · IA · {level} · {category}
       </div>
 
       <style>{`
-        * { box-sizing: border-box; }
-        @keyframes speakPulse { from{transform:scale(1);opacity:0.6} to{transform:scale(1.4);opacity:1} }
-        @keyframes wave { from{height:3px} to{height:22px} }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        @keyframes speakPulse { from{transform:scale(1);opacity:0.6} to{transform:scale(1.35);opacity:1} }
+        @keyframes wave { from{height:3px} to{height:24px} }
         @keyframes orbFloat { from{transform:translate(-50%,-50%) scale(1)} to{transform:translate(-50%,-50%) scale(1.15) translateY(-16px)} }
         @keyframes fadeDown { from{opacity:0;transform:translateY(-10px)} to{opacity:1;transform:translateY(0)} }
         @keyframes slideUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes slideDown { from{opacity:0;transform:translateY(-14px)} to{opacity:1;transform:translateY(0)} }
         @keyframes popUp { from{opacity:0;transform:scale(0.8) translateY(8px)} to{opacity:1;transform:scale(1) translateY(0)} }
         @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
         button:active { transform:scale(0.95) !important; }
