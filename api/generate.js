@@ -12,30 +12,27 @@ export default async function handler(req, res) {
   const GROQ_KEY = process.env.GROQ_KEY;
   if (!GOOGLE_KEY || !GROQ_KEY) return res.status(500).json({ error: "Faltan variables de entorno" });
 
-  // ── Banco de palabras por nivel/categoría ─────────────────────────────────
   const WORD_BANK = {
     "A1-Vocabulario": [
       "das Haus","der Mann","die Frau","das Kind","der Hund","die Katze","das Wasser",
       "das Brot","die Milch","der Apfel","das Buch","der Stift","die Schule","das Auto",
       "der Bus","der Zug","die Straße","das Geld","der Tag","die Nacht","das Jahr",
-      "der Monat","die Woche","das Wetter","die Sonne","der Regen","der Wind","der Baum",
-      "die Blume","das Tier","der Vogel","der Fisch","das Fleisch","das Gemüse","die Suppe",
-      "der Käse","die Butter","das Ei","der Kaffee","der Tee","das Bier","der Wein",
-      "die Stadt","das Dorf","der Park","der Markt","das Krankenhaus","die Apotheke",
-      "die Post","die Bank","das Hotel","der Bahnhof","der Flughafen","das Restaurant",
-      "die Küche","das Badezimmer","das Schlafzimmer","der Tisch","der Stuhl","das Bett",
-      "das Fenster","die Tür","die Lampe","das Telefon","der Computer","der Fernseher",
+      "der Monat","die Woche","das Wetter","die Sonne","der Regen","der Baum","die Blume",
+      "das Tier","der Vogel","der Fisch","das Fleisch","das Gemüse","die Suppe","der Käse",
+      "die Butter","das Ei","der Kaffee","der Tee","die Stadt","das Hotel","der Bahnhof",
+      "das Restaurant","die Küche","das Badezimmer","der Tisch","der Stuhl","das Bett",
+      "das Fenster","die Tür","die Lampe","das Telefon","der Computer","die Uhr",
+      "das Hemd","die Hose","die Jacke","der Schuh","die Tasche",
     ],
     "A2-Vocabulario": [
-      "die Gesundheit","das Krankenhaus","der Arzt","die Umwelt","die Natur","der Wald",
-      "der Fluss","das Meer","die Reise","das Hotel","die Reservierung","die Rechnung",
-      "der Beruf","das Gehalt","die Firma","die Technologie","das Internet","die Nachricht",
-      "die Einladung","das Geschenk","der Geburtstag","die Hochzeit","die Regierung",
-      "das Gesetz","die Freiheit","die Verantwortung","die Bildung","die Universität",
-      "der Vertrag","die Versicherung","das Konto","die Steuer","der Urlaub","die Küste",
-      "das Gebirge","der Hafen","die Brücke","das Museum","die Ausstellung","das Theater",
-      "das Konzert","die Mannschaft","das Spiel","der Sieg","die Niederlage","die Grenze",
-      "die Sprache","der Dialekt","die Kultur","die Tradition",
+      "die Gesundheit","der Arzt","die Umwelt","die Natur","der Wald","der Fluss",
+      "das Meer","die Reise","die Reservierung","die Rechnung","der Beruf","das Gehalt",
+      "die Firma","die Technologie","das Internet","die Nachricht","die Einladung",
+      "das Geschenk","der Geburtstag","die Hochzeit","die Regierung","das Gesetz",
+      "die Freiheit","die Bildung","die Universität","der Vertrag","die Versicherung",
+      "das Konto","der Urlaub","die Küste","der Hafen","die Brücke","das Museum",
+      "das Konzert","die Mannschaft","die Grenze","die Sprache","die Kultur","die Tradition",
+      "die Möglichkeit","die Gelegenheit","der Unterschied","die Gewohnheit",
     ],
     "A1-Verbos": [
       "gehen","kommen","machen","haben","sein","essen","trinken","schlafen","arbeiten",
@@ -49,15 +46,16 @@ export default async function handler(req, res) {
       "entscheiden","vergessen","erinnern","vorbereiten","anfangen","aufhören","vorschlagen",
       "anrufen","zurückkommen","vorstellen","sich freuen","sich ärgern","sich interessieren",
       "sich bewerben","entwickeln","verbessern","erreichen","verlieren","gewinnen",
-      "teilnehmen","organisieren","planen","beschreiben","vergleichen","analysieren",
-      "empfehlen","erlauben","verbieten","versprechen","bemerken","übersetzen",
+      "teilnehmen","organisiern","planen","beschreiben","vergleichen","empfehlen",
+      "erlauben","verbieten","versprechen","bemerken","übersetzen","sich gewöhnen",
     ],
     "A1-Frases": [
       "Guten Morgen","Guten Tag","Guten Abend","Gute Nacht","Auf Wiedersehen","Tschüss",
       "Wie heißt du","Ich heiße","Wie geht es dir","Mir geht es gut","Danke schön",
       "Bitte","Entschuldigung","Es tut mir leid","Ich verstehe nicht","Sprechen Sie Englisch",
-      "Wo ist die Toilette","Was kostet das","Ich möchte","Haben Sie","Die Rechnung bitte",
-      "Ich habe Hunger","Ich habe Durst","Hilfe","Ich bin krank","Guten Appetit",
+      "Wo ist die Toilette","Was kostet das","Ich möchte","Die Rechnung bitte",
+      "Ich habe Hunger","Ich habe Durst","Hilfe","Ich bin krank","Guten Appetit","Prost",
+      "Wie alt bist du","Ich komme aus","Wo wohnen Sie","Ich brauche einen Arzt",
     ],
     "A2-Frases": [
       "Könnten Sie mir helfen","Ich hätte gern","Das macht nichts","Das stimmt",
@@ -66,62 +64,87 @@ export default async function handler(req, res) {
       "Das hängt davon ab","Ich mache mir Sorgen","Alles wird gut","Das klingt gut",
       "Ich weiß es nicht genau","Wie war dein Tag","Pass auf dich auf","Viel Glück",
       "Herzlichen Glückwunsch","Ich bin einverstanden","Das ist mir egal",
-    ],
-    "A1-Gramática": [
-      "ich bin","du bist","er ist","wir sind","ihr seid","sie sind",
-      "ich habe","du hast","er hat","wir haben","der die das","ein eine",
-      "nicht","kein keine","und","oder","aber","weil","dass","W-Fragen",
-    ],
-    "A2-Gramática": [
-      "Perfekt mit haben","Perfekt mit sein","Präteritum von sein","Komparativ",
-      "Superlativ","Dativ","Akkusativ","Genitiv","Reflexive Verben","Passiv Präsens",
-      "Futur mit werden","Konjunktiv II würde","Relativsätze","trennbare Verben",
-      "Modalverben","Wechselpräpositionen","Dativpräpositionen","Akkusativpräpositionen",
+      "Kannst du mir erklären","Es war ein langer Tag","Ich freue mich dich zu sehen",
     ],
   };
 
+  // ── GRAMÁTICA: solo Groq con lógica pedagógica ────────────────────────────
+  if (category === "Gramática") {
+    const used = new Set(existingFronts);
+    const avoidList = [...used].slice(-15).join(", ");
+
+    const groqPrompt = `Eres un profesor experto en alemán para hispanohablantes de nivel ${level}.
+Genera exactamente 8 tarjetas de gramática alemana nivel ${level}.
+${avoidList ? `Evita estos temas ya vistos: ${avoidList}` : ""}
+
+Cada tarjeta enseña UNA regla gramatical clara y útil:
+- front: nombre del concepto gramatical (ej: "Perfekt mit haben")
+- back: explicación en español + ejemplo concreto (ej: "Pasado con haben · Ich habe gegessen ✓")
+- phonetic: oración de ejemplo en alemán (ej: "Ich habe das Buch gelesen.")
+- tip: truco o regla mnemotécnica corta en español (ej: "Verbos de acción usan haben")
+
+Responde SOLO con JSON válido sin backticks ni texto extra:
+{"cards":[{"front":"...","back":"...","phonetic":"...","tip":"..."}]}
+
+Temas para nivel ${level === "A1"
+  ? "A1: artículos der/die/das, conjugación de sein y haben, negación con nicht y kein, plural de sustantivos, casos Nominativ y Akkusativ, verbos modales können/müssen, posición del verbo en oración, preguntas con W-Fragen, verbos separables, pronombres personales"
+  : "A2: Perfekt con haben y sein, Präteritum de sein y haben, Komparativ y Superlativ, caso Dativ, preposiciones con Dativ y Akkusativ, verbos reflexivos, Konjunktiv II con würde, Passiv Präsens, oraciones con weil/dass/wenn, Futur con werden"}`;
+
+    try {
+      const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${GROQ_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "llama-3.1-8b-instant",
+          messages: [
+            { role: "system", content: "Eres experto en gramática alemana. Responde SOLO con JSON válido sin texto extra ni backticks." },
+            { role: "user", content: groqPrompt },
+          ],
+          temperature: 0.5,
+          max_tokens: 1200,
+        }),
+      });
+
+      const groqData = await groqRes.json();
+      if (groqData.error) return res.status(502).json({ error: "Error Groq gramática: " + groqData.error.message });
+
+      const text = groqData.choices?.[0]?.message?.content || "";
+      const clean = text.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      return res.status(200).json({ cards: parsed.cards || [] });
+    } catch (e) {
+      return res.status(500).json({ error: "Error gramática", detail: e.message });
+    }
+  }
+
+  // ── VOCABULARIO / VERBOS / FRASES: Google Translate + Groq ───────────────
   const key = `${level}-${category}`;
   const allWords = WORD_BANK[key] || [];
   const used = new Set(existingFronts);
   const available = allWords.filter(w => !used.has(w));
-
-  // Tomar hasta 8 palabras aleatorias
   const shuffled = available.sort(() => Math.random() - 0.5).slice(0, 8);
+
   if (shuffled.length === 0) return res.status(200).json({ cards: [] });
 
   try {
-    // ── 1. Google Translate: traducir todas en una sola llamada ───────────────
+    // 1. Google Translate
     const translateRes = await fetch(
       `https://translation.googleapis.com/language/translate/v2?key=${GOOGLE_KEY}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          q: shuffled,
-          source: "de",
-          target: "es",
-          format: "text",
-        }),
+        body: JSON.stringify({ q: shuffled, source: "de", target: "es", format: "text" }),
       }
     );
     const translateData = await translateRes.json();
-    if (!translateData.data?.translations) {
-      console.error("Google Translate error:", JSON.stringify(translateData));
-      return res.status(502).json({ error: "Error en Google Translate" });
-    }
+    if (!translateData.data?.translations) return res.status(502).json({ error: "Error Google Translate" });
     const translations = translateData.data.translations.map(t => t.translatedText);
 
-    // ── 2. Groq: generar fonética + tip para todas en una sola llamada ────────
+    // 2. Groq: fonética + tip
     const pairs = shuffled.map((w, i) => `${i + 1}. "${w}" = "${translations[i]}"`).join("\n");
-    const groqPrompt = `Para estas palabras/frases en alemán con su traducción al español, genera fonética y un consejo corto.
-
-${pairs}
-
-Responde SOLO con este JSON exacto, sin texto extra:
-{"items":[{"phonetic":"pronunciación silábica en MAYÚSCULAS","tip":"consejo útil máx 8 palabras"}]}
-
-Exactamente ${shuffled.length} items en el mismo orden. Fonética en mayúsculas silábicas como: "ikh GAY-e", "dee FRAU", etc.`;
-
     const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -132,7 +155,7 @@ Exactamente ${shuffled.length} items en el mismo orden. Fonética en mayúsculas
         model: "llama-3.1-8b-instant",
         messages: [
           { role: "system", content: "Eres experto en fonética alemana. Responde SOLO con JSON válido sin texto extra ni backticks." },
-          { role: "user", content: groqPrompt },
+          { role: "user", content: `Para estas palabras alemanas genera fonética y consejo pedagógico para hispanohablantes.\n\n${pairs}\n\nResponde SOLO con JSON:\n{"items":[{"phonetic":"MAYÚSCULAS silábicas","tip":"consejo máx 8 palabras"}]}\nExactamente ${shuffled.length} items en el mismo orden.` },
         ],
         temperature: 0.3,
         max_tokens: 800,
@@ -140,17 +163,12 @@ Exactamente ${shuffled.length} items en el mismo orden. Fonética en mayúsculas
     });
 
     const groqData = await groqRes.json();
-    if (groqData.error) {
-      console.error("Groq error:", groqData.error.message);
-      return res.status(502).json({ error: "Error en Groq" });
-    }
+    if (groqData.error) return res.status(502).json({ error: "Error Groq: " + groqData.error.message });
 
     const groqText = groqData.choices?.[0]?.message?.content || "";
-    const groqClean = groqText.replace(/```json|```/g, "").trim();
-    const groqParsed = JSON.parse(groqClean);
+    const groqParsed = JSON.parse(groqText.replace(/```json|```/g, "").trim());
     const items = groqParsed.items || [];
 
-    // ── 3. Combinar todo en tarjetas ─────────────────────────────────────────
     const cards = shuffled.map((word, i) => ({
       front: word,
       back: translations[i] || "",
@@ -159,9 +177,7 @@ Exactamente ${shuffled.length} items en el mismo orden. Fonética en mayúsculas
     }));
 
     return res.status(200).json({ cards });
-
   } catch (e) {
-    console.error("Error en /api/generate:", e);
     return res.status(500).json({ error: "Error interno", detail: e.message });
   }
 }
