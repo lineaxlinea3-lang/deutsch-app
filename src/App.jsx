@@ -71,7 +71,7 @@ const THEME = {
 };
 
 // ─── LOCALSTORAGE (funciona en Vercel) ────────────────────────────────────
-const STORAGE_KEY = "deutsch-progress-v1";
+const STORAGE_KEY = "deutsch-progress-v2";
 
 function loadProgress() {
   try {
@@ -82,10 +82,37 @@ function loadProgress() {
 
 function saveProgress(data) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    const existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, ...data }));
   } catch (e) {
     console.warn("No se pudo guardar progreso:", e);
   }
+}
+
+// Guarda tarjetas conocidas/repasar por mazo
+function saveKnownCards(deckKey, knownFronts, unknownFronts) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+    existing.decks = existing.decks || {};
+    existing.decks[deckKey] = {
+      known: knownFronts,
+      unknown: unknownFronts,
+      savedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(existing));
+  } catch (e) {
+    console.warn("No se pudo guardar tarjetas:", e);
+  }
+}
+
+// Carga tarjetas conocidas/repasar por mazo
+function loadKnownCards(deckKey) {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { known: [], unknown: [] };
+    const all = JSON.parse(raw);
+    return all.decks?.[deckKey] || { known: [], unknown: [] };
+  } catch { return { known: [], unknown: [] }; }
 }
 
 // ─── API CALL → /api/generate (SIN TOCAR) ────────────────────────────────
@@ -326,20 +353,42 @@ export default function DeutschAI() {
     if (!loaded) return;
     saveProgress({
       level, category,
-      knownCount: known.size,
-      unknownCount: unknown.size,
-      totalCards: deck.length,
       lastSession: new Date().toISOString(),
     });
-  }, [level, category, known.size, unknown.size, deck.length, loaded]);
+  }, [level, category, loaded]);
 
-  // Reset deck when level/category changes
+  // Save known/unknown cards when they change
   useEffect(() => {
-    setDeck(SEED_CARDS[deckKey] || []);
+    if (!loaded || deck.length === 0) return;
+    // Save by card front text (persists even if IDs change)
+    const knownFronts = deck.filter(c => known.has(c.id)).map(c => c.front);
+    const unknownFronts = deck.filter(c => unknown.has(c.id)).map(c => c.front);
+    saveKnownCards(deckKey, knownFronts, unknownFronts);
+  }, [known.size, unknown.size, loaded]);
+
+  // Reset deck when level/category changes + restore known/unknown from storage
+  useEffect(() => {
+    const seeds = SEED_CARDS[deckKey] || [];
+    setDeck(seeds);
     setIndex(0); setFlipped(false); setShowTip(false);
-    setKnown(new Set()); setUnknown(new Set());
     setShowPronunciation(false);
     generatingRef.current = false;
+
+    // Restore known/unknown from localStorage
+    const saved = loadKnownCards(deckKey);
+    if (saved.known.length > 0 || saved.unknown.length > 0) {
+      const knownSet = new Set(
+        seeds.filter(c => saved.known.includes(c.front)).map(c => c.id)
+      );
+      const unknownSet = new Set(
+        seeds.filter(c => saved.unknown.includes(c.front)).map(c => c.id)
+      );
+      setKnown(knownSet);
+      setUnknown(unknownSet);
+    } else {
+      setKnown(new Set());
+      setUnknown(new Set());
+    }
   }, [deckKey]);
 
   // Auto-generate when deck is small or near end
