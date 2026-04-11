@@ -676,7 +676,7 @@ export default function DeutschAI() {
       </button>
 
       <div style={{ marginTop: 20, fontSize: 10, color: "rgba(255,255,255,0.06)", letterSpacing: 4, textTransform: "uppercase", zIndex: 1 }}>
-        Deutsch ∞ · IA · {level} · {category}
+       Deutsch ∞ · IA v2 · {level} · {category}
       </div>
 
       <style>{`
