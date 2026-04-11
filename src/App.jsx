@@ -70,8 +70,8 @@ const THEME = {
   A2: { accent: "#1e90ff", glow: "rgba(30,144,255,0.3)", glass: "rgba(30,144,255,0.08)", border: "rgba(30,144,255,0.22)", label: "Básico" },
 };
 
-// ─── LOCALSTORAGE (funciona en Vercel) ────────────────────────────────────
-const STORAGE_KEY = "deutsch-progress-v2";
+// ─── LOCALSTORAGE + SRS ───────────────────────────────────────────────────
+const STORAGE_KEY = "deutsch-progress-v3";
 
 function loadProgress() {
   try {
@@ -89,30 +89,76 @@ function saveProgress(data) {
   }
 }
 
-// Guarda tarjetas conocidas/repasar por mazo
-function saveKnownCards(deckKey, knownFronts, unknownFronts) {
+// ─── SRS: Algoritmo de Repetición Espaciada ───────────────────────────────
+// Intervalos en días según número de aciertos consecutivos
+const SRS_INTERVALS = [0, 1, 3, 7, 14, 30, 60];
+
+function getSRSData(deckKey) {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return {};
+    const all = JSON.parse(raw);
+    return all.srs?.[deckKey] || {};
+  } catch { return {}; }
+}
+
+function saveSRSCard(deckKey, front, correct) {
   try {
     const existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-    existing.decks = existing.decks || {};
-    existing.decks[deckKey] = {
-      known: knownFronts,
-      unknown: unknownFronts,
-      savedAt: new Date().toISOString(),
-    };
+    existing.srs = existing.srs || {};
+    existing.srs[deckKey] = existing.srs[deckKey] || {};
+    const card = existing.srs[deckKey][front] || { streak: 0, nextReview: null, totalReviews: 0 };
+
+    if (correct) {
+      card.streak = Math.min(card.streak + 1, SRS_INTERVALS.length - 1);
+    } else {
+      card.streak = 0; // Resetear racha si falla
+    }
+
+    const daysUntilNext = SRS_INTERVALS[card.streak];
+    const next = new Date();
+    next.setDate(next.getDate() + daysUntilNext);
+    card.nextReview = next.toISOString();
+    card.totalReviews = (card.totalReviews || 0) + 1;
+    card.lastReview = new Date().toISOString();
+
+    existing.srs[deckKey][front] = card;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(existing));
   } catch (e) {
-    console.warn("No se pudo guardar tarjetas:", e);
+    console.warn("Error SRS:", e);
   }
 }
 
-// Carga tarjetas conocidas/repasar por mazo
-function loadKnownCards(deckKey) {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { known: [], unknown: [] };
-    const all = JSON.parse(raw);
-    return all.decks?.[deckKey] || { known: [], unknown: [] };
-  } catch { return { known: [], unknown: [] }; }
+// Ordena el mazo según SRS — tarjetas pendientes primero
+function sortBySRS(cards, srsData) {
+  const now = new Date();
+  return [...cards].sort((a, b) => {
+    const srsA = srsData[a.front];
+    const srsB = srsData[b.front];
+
+    // Sin datos SRS → mostrar primero (tarjeta nueva)
+    if (!srsA && !srsB) return 0;
+    if (!srsA) return -1;
+    if (!srsB) return 1;
+
+    const nextA = new Date(srsA.nextReview);
+    const nextB = new Date(srsB.nextReview);
+
+    // Vencidas primero (nextReview <= ahora)
+    const aOverdue = nextA <= now;
+    const bOverdue = nextB <= now;
+    if (aOverdue && !bOverdue) return -1;
+    if (!aOverdue && bOverdue) return 1;
+
+    // Entre vencidas: la más antigua primero
+    return nextA - nextB;
+  });
+}
+
+// Indica cuántas tarjetas están pendientes de repasar hoy
+function getDueTodayCount(srsData) {
+  const now = new Date();
+  return Object.values(srsData).filter(c => !c.nextReview || new Date(c.nextReview) <= now).length;
 }
 
 // ─── API CALL → /api/generate (SIN TOCAR) ────────────────────────────────
@@ -328,6 +374,8 @@ export default function DeutschAI() {
   const [showPronunciation, setShowPronunciation] = useState(false);
   const [openLevel, setOpenLevel] = useState(null);
   const [loaded, setLoaded] = useState(false);
+  const [srsData, setSrsData] = useState({});
+  const [dueToday, setDueToday] = useState(0);
   const generatingRef = useRef(false);
   const touchRef = useRef(null);
   const { toasts, show: showToast } = useToast();
@@ -357,38 +405,23 @@ export default function DeutschAI() {
     });
   }, [level, category, loaded]);
 
-  // Save known/unknown cards when they change
-  useEffect(() => {
-    if (!loaded || deck.length === 0) return;
-    // Save by card front text (persists even if IDs change)
-    const knownFronts = deck.filter(c => known.has(c.id)).map(c => c.front);
-    const unknownFronts = deck.filter(c => unknown.has(c.id)).map(c => c.front);
-    saveKnownCards(deckKey, knownFronts, unknownFronts);
-  }, [known.size, unknown.size, loaded]);
+  // SRS handles card persistence directly via saveSRSCard()
 
-  // Reset deck when level/category changes + restore known/unknown from storage
+  // Reset deck when level/category changes + SRS sorting
   useEffect(() => {
     const seeds = SEED_CARDS[deckKey] || [];
-    setDeck(seeds);
+    const currentSRS = getSRSData(deckKey);
+    setSrsData(currentSRS);
+    setDueToday(getDueTodayCount(currentSRS));
+
+    // Sort by SRS — due cards first
+    const sorted = sortBySRS(seeds, currentSRS);
+    setDeck(sorted);
     setIndex(0); setFlipped(false); setShowTip(false);
     setShowPronunciation(false);
     generatingRef.current = false;
-
-    // Restore known/unknown from localStorage
-    const saved = loadKnownCards(deckKey);
-    if (saved.known.length > 0 || saved.unknown.length > 0) {
-      const knownSet = new Set(
-        seeds.filter(c => saved.known.includes(c.front)).map(c => c.id)
-      );
-      const unknownSet = new Set(
-        seeds.filter(c => saved.unknown.includes(c.front)).map(c => c.id)
-      );
-      setKnown(knownSet);
-      setUnknown(unknownSet);
-    } else {
-      setKnown(new Set());
-      setUnknown(new Set());
-    }
+    setKnown(new Set());
+    setUnknown(new Set());
   }, [deckKey]);
 
   // Auto-generate when deck is small or near end
@@ -429,6 +462,11 @@ export default function DeutschAI() {
     if (!card) return;
     setKnown(s => new Set([...s, card.id]));
     setUnknown(s => { const n = new Set(s); n.delete(card.id); return n; });
+    // SRS: registrar acierto
+    saveSRSCard(deckKey, card.front, true);
+    const updated = getSRSData(deckKey);
+    setSrsData(updated);
+    setDueToday(getDueTodayCount(updated));
     go("next");
   }
 
@@ -436,6 +474,16 @@ export default function DeutschAI() {
     if (!card) return;
     setUnknown(s => new Set([...s, card.id]));
     setKnown(s => { const n = new Set(s); n.delete(card.id); return n; });
+    // SRS: registrar fallo — mover al final del mazo para ver pronto
+    saveSRSCard(deckKey, card.front, false);
+    const updated = getSRSData(deckKey);
+    setSrsData(updated);
+    setDueToday(getDueTodayCount(updated));
+    // Mover tarjeta fallida al final para repasar en esta sesión
+    setDeck(prev => {
+      const rest = prev.filter((_, i) => i !== index);
+      return [...rest, card];
+    });
     go("next");
   }
 
@@ -478,6 +526,11 @@ export default function DeutschAI() {
         </div>
         <div style={{ fontSize: 11, color: theme.accent, marginTop: 4, opacity: 0.7 }}>
           {deck.length} tarjetas · {CAT_ICONS[category]} {category}
+          {dueToday > 0 && (
+            <span style={{ marginLeft: 8, background: "rgba(239,68,68,0.15)", color: "#e74c3c", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 10, padding: "1px 8px", fontSize: 10, fontWeight: 700 }}>
+              {dueToday} pendientes hoy
+            </span>
+          )}
         </div>
       </div>
 
@@ -609,11 +662,11 @@ export default function DeutschAI() {
       )}
 
       {/* Stats */}
-      <div style={{ display: "flex", gap: 32, marginBottom: 16, zIndex: 1 }}>
-        {[[known.size, "Aprendidas", theme.accent], [unknown.size, "Repasar", "#e74c3c"], [deck.length, "Total", "rgba(255,255,255,0.2)"]].map(([val, label, color]) => (
+      <div style={{ display: "flex", gap: 24, marginBottom: 16, zIndex: 1 }}>
+        {[[known.size, "Aprendidas", theme.accent], [unknown.size, "Repasar", "#e74c3c"], [deck.length, "Total", "rgba(255,255,255,0.2)"], [dueToday, "Hoy", "#f5a623"]].map(([val, label, color]) => (
           <div key={label} style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 24, fontWeight: 800, color, textShadow: color === theme.accent ? `0 0 12px ${theme.glow}` : "none" }}>{val}</div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)" }}>{label}</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color, textShadow: color === theme.accent ? `0 0 12px ${theme.glow}` : "none" }}>{val}</div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.2)" }}>{label}</div>
           </div>
         ))}
       </div>
