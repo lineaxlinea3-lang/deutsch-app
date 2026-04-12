@@ -1,10 +1,112 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-// ─── UNIQUE ID GENERATOR ───────────────────────────────────────────────────
+// ─── SUPABASE CONFIG ──────────────────────────────────────────────────────
+const SUPABASE_URL = "https://snmdvcwchgkbxnifcnwi.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNubWR2Y3djaGdrYnhuaWZjbndpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NzExOTEsImV4cCI6MjA5MTQ0NzE5MX0.Wu6TGVgPcy5C-uLRS9nJCphHLF9H_yK37teKo1Q_89Y";
+
+// Supabase client ligero sin dependencias externas
+const supabase = {
+  headers: {
+    "Content-Type": "application/json",
+    "apikey": SUPABASE_ANON_KEY,
+    "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+  },
+
+  // Auth: registrar con email
+  async signUp(email, password, name) {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify({ email, password, data: { full_name: name } }),
+    });
+    return res.json();
+  },
+
+  // Auth: iniciar sesión con email
+  async signIn(email, password) {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify({ email, password }),
+    });
+    return res.json();
+  },
+
+  // Auth: cerrar sesión
+  async signOut(accessToken) {
+    await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+      method: "POST",
+      headers: { ...this.headers, "Authorization": `Bearer ${accessToken}` },
+    });
+  },
+
+  // Auth: Google OAuth URL
+  getGoogleOAuthURL() {
+    return `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(window.location.origin)}`;
+  },
+
+  // DB: obtener progreso SRS del usuario
+  async getSRSProgress(userId, deckKey, accessToken) {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/srs_progress?user_id=eq.${userId}&deck_key=eq.${deckKey}`,
+      { headers: { ...this.headers, "Authorization": `Bearer ${accessToken}` } }
+    );
+    return res.json();
+  },
+
+  // DB: guardar/actualizar progreso SRS
+  async upsertSRS(userId, deckKey, cardFront, data, accessToken) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/srs_progress`, {
+      method: "POST",
+      headers: {
+        ...this.headers,
+        "Authorization": `Bearer ${accessToken}`,
+        "Prefer": "resolution=merge-duplicates",
+      },
+      body: JSON.stringify({
+        user_id: userId,
+        deck_key: deckKey,
+        card_front: cardFront,
+        ...data,
+      }),
+    });
+    return res.ok;
+  },
+
+  // DB: actualizar perfil
+  async updateProfile(userId, data, accessToken) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`, {
+      method: "PATCH",
+      headers: {
+        ...this.headers,
+        "Authorization": `Bearer ${accessToken}`,
+        "Prefer": "return=minimal",
+      },
+      body: JSON.stringify(data),
+    });
+    return res.ok;
+  },
+};
+
+// ─── SESSION STORAGE ──────────────────────────────────────────────────────
+function saveSession(session) {
+  try { localStorage.setItem("glota-session", JSON.stringify(session)); } catch {}
+}
+function loadSession() {
+  try {
+    const raw = localStorage.getItem("glota-session");
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function clearSession() {
+  try { localStorage.removeItem("glota-session"); } catch {}
+}
+
+// ─── UNIQUE ID ────────────────────────────────────────────────────────────
 let _uid = 0;
 const uid = () => `card_${Date.now()}_${++_uid}`;
 
-// ─── SEED CARDS ────────────────────────────────────────────────────────────
+// ─── SEED CARDS ───────────────────────────────────────────────────────────
 const RAW_SEEDS = {
   "A1-Vocabulario": [
     { front: "das Haus", back: "la casa", phonetic: "das HAUS", tip: "das = neutro" },
@@ -56,7 +158,6 @@ const RAW_SEEDS = {
   ],
 };
 
-// Asignar IDs únicos a todas las seed cards
 const SEED_CARDS = {};
 Object.entries(RAW_SEEDS).forEach(([key, cards]) => {
   SEED_CARDS[key] = cards.map(c => ({ ...c, id: uid() }));
@@ -70,98 +171,33 @@ const THEME = {
   A2: { accent: "#1e90ff", glow: "rgba(30,144,255,0.3)", glass: "rgba(30,144,255,0.08)", border: "rgba(30,144,255,0.22)", label: "Básico" },
 };
 
-// ─── LOCALSTORAGE + SRS ───────────────────────────────────────────────────
-const STORAGE_KEY = "deutsch-progress-v3";
-
-function loadProgress() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
-}
-
-function saveProgress(data) {
-  try {
-    const existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, ...data }));
-  } catch (e) {
-    console.warn("No se pudo guardar progreso:", e);
-  }
-}
-
-// ─── SRS: Algoritmo de Repetición Espaciada ───────────────────────────────
-// Intervalos en días según número de aciertos consecutivos
+// ─── SRS ──────────────────────────────────────────────────────────────────
 const SRS_INTERVALS = [0, 1, 3, 7, 14, 30, 60];
 
-function getSRSData(deckKey) {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const all = JSON.parse(raw);
-    return all.srs?.[deckKey] || {};
-  } catch { return {}; }
-}
-
-function saveSRSCard(deckKey, front, correct) {
-  try {
-    const existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-    existing.srs = existing.srs || {};
-    existing.srs[deckKey] = existing.srs[deckKey] || {};
-    const card = existing.srs[deckKey][front] || { streak: 0, nextReview: null, totalReviews: 0 };
-
-    if (correct) {
-      card.streak = Math.min(card.streak + 1, SRS_INTERVALS.length - 1);
-    } else {
-      card.streak = 0; // Resetear racha si falla
-    }
-
-    const daysUntilNext = SRS_INTERVALS[card.streak];
-    const next = new Date();
-    next.setDate(next.getDate() + daysUntilNext);
-    card.nextReview = next.toISOString();
-    card.totalReviews = (card.totalReviews || 0) + 1;
-    card.lastReview = new Date().toISOString();
-
-    existing.srs[deckKey][front] = card;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(existing));
-  } catch (e) {
-    console.warn("Error SRS:", e);
-  }
-}
-
-// Ordena el mazo según SRS — tarjetas pendientes primero
 function sortBySRS(cards, srsData) {
   const now = new Date();
   return [...cards].sort((a, b) => {
     const srsA = srsData[a.front];
     const srsB = srsData[b.front];
-
-    // Sin datos SRS → mostrar primero (tarjeta nueva)
     if (!srsA && !srsB) return 0;
     if (!srsA) return -1;
     if (!srsB) return 1;
-
-    const nextA = new Date(srsA.nextReview);
-    const nextB = new Date(srsB.nextReview);
-
-    // Vencidas primero (nextReview <= ahora)
+    const nextA = new Date(srsA.next_review);
+    const nextB = new Date(srsB.next_review);
     const aOverdue = nextA <= now;
     const bOverdue = nextB <= now;
     if (aOverdue && !bOverdue) return -1;
     if (!aOverdue && bOverdue) return 1;
-
-    // Entre vencidas: la más antigua primero
     return nextA - nextB;
   });
 }
 
-// Indica cuántas tarjetas están pendientes de repasar hoy
 function getDueTodayCount(srsData) {
   const now = new Date();
-  return Object.values(srsData).filter(c => !c.nextReview || new Date(c.nextReview) <= now).length;
+  return Object.values(srsData).filter(c => !c.next_review || new Date(c.next_review) <= now).length;
 }
 
-// ─── API CALL → /api/generate (SIN TOCAR) ────────────────────────────────
+// ─── API CALL (SIN TOCAR) ─────────────────────────────────────────────────
 async function generateCards(level, category, existingFronts = []) {
   try {
     const res = await fetch("/api/generate", {
@@ -193,7 +229,7 @@ function speakGerman(text, onStart, onEnd) {
   window.speechSynthesis.speak(utter);
 }
 
-// ─── LEVENSHTEIN (de Opus, más preciso) ──────────────────────────────────
+// ─── LEVENSHTEIN ──────────────────────────────────────────────────────────
 function levenshtein(a, b) {
   const m = a.length, n = b.length;
   const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
@@ -205,7 +241,6 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
-// ─── PRONUNCIACIÓN (Levenshtein de Opus, SIN TOCAR lógica base) ──────────
 function normalizeDe(str) {
   return str.toLowerCase()
     .replace(/[!?.,;:¡¿"']/g, "")
@@ -216,7 +251,6 @@ function normalizeDe(str) {
 function scorePronunciation(expected, heard) {
   const exp = normalizeDe(expected), got = normalizeDe(heard);
   if (exp === got) return { score: 100, label: "¡Perfecto!", color: "#1db954", emoji: "🏆" };
-
   const expWords = exp.split(/\s+/), gotWords = got.split(/\s+/);
   let wordMatches = 0;
   expWords.forEach(w => {
@@ -224,11 +258,9 @@ function scorePronunciation(expected, heard) {
     if (bestDist <= Math.max(1, Math.floor(w.length * 0.3))) wordMatches++;
   });
   const wordScore = expWords.length > 0 ? wordMatches / expWords.length : 0;
-
   const dist = levenshtein(exp, got);
   const charScore = 1 - dist / Math.max(exp.length, got.length, 1);
   const final = Math.round((wordScore * 0.55 + charScore * 0.45) * 100);
-
   if (final >= 90) return { score: final, label: "¡Excelente!", color: "#1db954", emoji: "🏆" };
   if (final >= 75) return { score: final, label: "¡Muy bien!", color: "#1db954", emoji: "✅" };
   if (final >= 55) return { score: final, label: "Casi, sigue practicando", color: "#f5a623", emoji: "👍" };
@@ -236,7 +268,7 @@ function scorePronunciation(expected, heard) {
   return { score: final, label: "Inténtalo de nuevo", color: "#e74c3c", emoji: "🔄" };
 }
 
-// ─── SPEECH RECOGNITION (SIN TOCAR) ──────────────────────────────────────
+// ─── SPEECH RECOGNITION ───────────────────────────────────────────────────
 function useSpeechRecognition() {
   const ref = useRef(null);
   const [listening, setListening] = useState(false);
@@ -257,7 +289,7 @@ function useSpeechRecognition() {
   return { listening, transcript, supported, start, stop };
 }
 
-// ─── TOAST SYSTEM (de Opus) ───────────────────────────────────────────────
+// ─── TOAST SYSTEM ─────────────────────────────────────────────────────────
 function useToast() {
   const [toasts, setToasts] = useState([]);
   const idRef = useRef(0);
@@ -281,7 +313,7 @@ function ToastContainer({ toasts }) {
       {toasts.map(t => {
         const c = colors[t.type] || colors.info;
         return (
-          <div key={t.id} style={{ background: c.bg, border: `1px solid ${c.border}`, borderRadius: 14, padding: "12px 18px", color: c.text, fontSize: 13, fontWeight: 600, backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", boxShadow: "0 8px 32px rgba(0,0,0,0.4)", display: "flex", alignItems: "center", gap: 10, animation: "slideDown 0.3s cubic-bezier(.17,.67,.25,1.2)" }}>
+          <div key={t.id} style={{ background: c.bg, border: `1px solid ${c.border}`, borderRadius: 14, padding: "12px 18px", color: c.text, fontSize: 13, fontWeight: 600, backdropFilter: "blur(20px)", boxShadow: "0 8px 32px rgba(0,0,0,0.4)", display: "flex", alignItems: "center", gap: 10, animation: "slideDown 0.3s ease" }}>
             <span style={{ fontSize: 14, fontWeight: 800, width: 22, height: 22, borderRadius: "50%", background: c.border, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{c.icon}</span>
             {t.message}
           </div>
@@ -291,25 +323,22 @@ function ToastContainer({ toasts }) {
   );
 }
 
-// ─── PRONUNCIATION PANEL (SIN TOCAR base, + mejoras Opus) ────────────────
+// ─── PRONUNCIATION PANEL ──────────────────────────────────────────────────
 function PronunciationPanel({ card, theme, onSpeak, speaking }) {
   const { listening, transcript, supported, start, stop } = useSpeechRecognition();
   const [result, setResult] = useState(null);
   const [attempts, setAttempts] = useState(0);
-
   useEffect(() => { setResult(null); setAttempts(0); }, [card?.id]);
   useEffect(() => {
     if (transcript && card) { setResult({ ...scorePronunciation(card.front, transcript), heard: transcript }); setAttempts(a => a + 1); }
   }, [transcript]);
-
   if (!supported) return (
     <div style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${theme.border}`, borderRadius: 16, padding: "12px 16px", fontSize: 12, color: "rgba(255,255,255,0.35)", textAlign: "center", marginBottom: 12, width: "100%", maxWidth: 420 }}>
       Usa Chrome para reconocimiento de voz
     </div>
   );
-
   return (
-    <div style={{ background: "rgba(255,255,255,0.04)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", border: `1px solid ${theme.border}`, borderRadius: 20, overflow: "hidden", marginBottom: 14, width: "100%", maxWidth: 420, animation: "slideUp 0.3s ease" }}>
+    <div style={{ background: "rgba(255,255,255,0.04)", backdropFilter: "blur(20px)", border: `1px solid ${theme.border}`, borderRadius: 20, overflow: "hidden", marginBottom: 14, width: "100%", maxWidth: 420, animation: "slideUp 0.3s ease" }}>
       <div style={{ padding: "10px 16px 8px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", letterSpacing: 2, textTransform: "uppercase" }}>🎤 Pronunciación</span>
         {attempts > 0 && <span style={{ fontSize: 10, color: theme.accent }}>{attempts} intento{attempts > 1 ? "s" : ""}</span>}
@@ -358,8 +387,175 @@ function PronunciationPanel({ card, theme, onSpeak, speaking }) {
   );
 }
 
+// ─── LOGIN SCREEN ─────────────────────────────────────────────────────────
+function LoginScreen({ onLogin, toastShow }) {
+  const [mode, setMode] = useState("login"); // login | register
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit() {
+    if (!email || !password) { toastShow("Completa todos los campos", "error"); return; }
+    if (mode === "register" && !name) { toastShow("Ingresa tu nombre", "error"); return; }
+    setLoading(true);
+    try {
+      let result;
+      if (mode === "login") {
+        result = await supabase.signIn(email, password);
+      } else {
+        result = await supabase.signUp(email, password, name);
+      }
+      if (result.error) {
+        toastShow(result.error.message || "Error de autenticación", "error");
+      } else if (result.access_token) {
+        saveSession(result);
+        onLogin(result);
+        toastShow(mode === "login" ? "¡Bienvenido de vuelta!" : "¡Cuenta creada!", "success");
+      } else if (mode === "register") {
+        toastShow("Revisa tu correo para confirmar tu cuenta", "info", 5000);
+      }
+    } catch (e) {
+      toastShow("Error de conexión", "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleGoogle() {
+    window.location.href = supabase.getGoogleOAuthURL();
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: "linear-gradient(145deg,#080810 0%,#0d0d1a 50%,#080f0b 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 20px", fontFamily: "system-ui,sans-serif", color: "#fff" }}>
+      <div style={{ position: "fixed", left: "10%", top: "15%", width: 300, height: 300, borderRadius: "50%", background: "rgba(29,185,84,0.2)", filter: "blur(80px)", pointerEvents: "none" }} />
+      <div style={{ position: "fixed", right: "5%", bottom: "20%", width: 220, height: 220, borderRadius: "50%", background: "rgba(30,144,255,0.15)", filter: "blur(70px)", pointerEvents: "none" }} />
+
+      <div style={{ textAlign: "center", marginBottom: 32 }}>
+        <div style={{ fontSize: 10, letterSpacing: 5, color: "rgba(255,255,255,0.2)", textTransform: "uppercase", marginBottom: 8 }}>Aprende Idiomas con IA</div>
+        <div style={{ fontSize: 42, fontWeight: 800, letterSpacing: -2, background: "linear-gradient(135deg,#fff 30%,#1db954)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Glota</div>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", marginTop: 6 }}>Tu progreso guardado en la nube ☁️</div>
+      </div>
+
+      <div style={{ width: "100%", maxWidth: 380, background: "rgba(255,255,255,0.04)", backdropFilter: "blur(30px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 24, padding: "28px 24px" }}>
+
+        {/* Tabs */}
+        <div style={{ display: "flex", background: "rgba(255,255,255,0.05)", borderRadius: 14, padding: 4, marginBottom: 24 }}>
+          {["login", "register"].map(m => (
+            <button key={m} onClick={() => setMode(m)} style={{ flex: 1, padding: "9px", borderRadius: 11, background: mode === m ? "rgba(255,255,255,0.1)" : "transparent", border: "none", color: mode === m ? "#fff" : "rgba(255,255,255,0.35)", fontSize: 13, fontWeight: 600, cursor: "pointer", transition: "all 0.2s" }}>
+              {m === "login" ? "Iniciar sesión" : "Registrarse"}
+            </button>
+          ))}
+        </div>
+
+        {/* Google button */}
+        <button onClick={handleGoogle} style={{ width: "100%", padding: "13px", borderRadius: 14, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 16, transition: "all 0.2s" }}>
+          <span style={{ fontSize: 18 }}>🔵</span>
+          Continuar con Google
+        </button>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.08)" }} />
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>o con correo</span>
+          <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.08)" }} />
+        </div>
+
+        {/* Name field (register only) */}
+        {mode === "register" && (
+          <input
+            placeholder="Tu nombre"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            style={{ width: "100%", padding: "13px 16px", borderRadius: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 14, marginBottom: 10, outline: "none", boxSizing: "border-box" }}
+          />
+        )}
+
+        {/* Email */}
+        <input
+          type="email"
+          placeholder="Correo electrónico"
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          style={{ width: "100%", padding: "13px 16px", borderRadius: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 14, marginBottom: 10, outline: "none", boxSizing: "border-box" }}
+        />
+
+        {/* Password */}
+        <input
+          type="password"
+          placeholder="Contraseña"
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && handleSubmit()}
+          style={{ width: "100%", padding: "13px 16px", borderRadius: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 14, marginBottom: 20, outline: "none", boxSizing: "border-box" }}
+        />
+
+        {/* Submit */}
+        <button onClick={handleSubmit} disabled={loading} style={{ width: "100%", padding: "14px", borderRadius: 14, background: loading ? "rgba(29,185,84,0.3)" : "linear-gradient(135deg,#1db954,#17a349)", border: "none", color: "#fff", fontSize: 15, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", transition: "all 0.2s" }}>
+          {loading ? "..." : mode === "login" ? "Iniciar sesión" : "Crear cuenta"}
+        </button>
+      </div>
+
+      <div style={{ marginTop: 20, fontSize: 11, color: "rgba(255,255,255,0.15)", textAlign: "center" }}>
+        Tu progreso se guarda automáticamente en la nube
+      </div>
+    </div>
+  );
+}
+
+// ─── SIDEBAR ──────────────────────────────────────────────────────────────
+function Sidebar({ open, onClose, session, onLogout, theme }) {
+  if (!open) return null;
+  const user = session?.user;
+  const name = user?.user_metadata?.full_name || user?.email?.split("@")[0] || "Usuario";
+  const email = user?.email || "";
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)", zIndex: 100 }} />
+      <div style={{ position: "fixed", left: 0, top: 0, bottom: 0, width: 280, background: "linear-gradient(180deg,#0d0d1a,#080810)", border: "1px solid rgba(255,255,255,0.08)", borderLeft: "none", zIndex: 101, display: "flex", flexDirection: "column", animation: "slideRight 0.25s ease", padding: "0 0 24px" }}>
+
+        {/* Header */}
+        <div style={{ padding: "48px 20px 20px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+          <div style={{ width: 52, height: 52, borderRadius: "50%", background: `linear-gradient(135deg,${theme.accent},${theme.accent}66)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, marginBottom: 12 }}>
+            {name[0]?.toUpperCase() || "U"}
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#fff" }}>{name}</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", marginTop: 3 }}>{email}</div>
+        </div>
+
+        {/* Menu items */}
+        <div style={{ flex: 1, padding: "16px 12px" }}>
+          {[
+            { icon: "📊", label: "Mi progreso", soon: true },
+            { icon: "🎯", label: "Cuestionario de nivel", soon: true },
+            { icon: "🌍", label: "Otros idiomas", soon: true },
+            { icon: "🎨", label: "Apariencia", soon: true },
+            { icon: "⚙️", label: "Configuración", soon: true },
+          ].map(item => (
+            <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 14, color: item.soon ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.7)", cursor: item.soon ? "default" : "pointer", marginBottom: 4 }}>
+              <span style={{ fontSize: 18 }}>{item.icon}</span>
+              <span style={{ fontSize: 14, fontWeight: 500 }}>{item.label}</span>
+              {item.soon && <span style={{ marginLeft: "auto", fontSize: 9, color: theme.accent, background: theme.glass, border: `1px solid ${theme.border}`, borderRadius: 6, padding: "2px 6px", fontWeight: 700 }}>PRONTO</span>}
+            </div>
+          ))}
+        </div>
+
+        {/* Logout */}
+        <div style={{ padding: "0 12px" }}>
+          <button onClick={onLogout} style={{ width: "100%", padding: "13px", borderRadius: 14, background: "rgba(231,76,60,0.08)", border: "1px solid rgba(231,76,60,0.2)", color: "#e74c3c", fontSize: 14, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <span>🚪</span> Cerrar sesión
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────
 export default function DeutschAI() {
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [level, setLevel] = useState("A1");
   const [category, setCategory] = useState("Vocabulario");
   const [deck, setDeck] = useState([]);
@@ -373,7 +569,6 @@ export default function DeutschAI() {
   const [speaking, setSpeaking] = useState(false);
   const [showPronunciation, setShowPronunciation] = useState(false);
   const [openLevel, setOpenLevel] = useState(null);
-  const [loaded, setLoaded] = useState(false);
   const [srsData, setSrsData] = useState({});
   const [dueToday, setDueToday] = useState(0);
   const generatingRef = useRef(false);
@@ -385,46 +580,77 @@ export default function DeutschAI() {
   const card = deck[index] || null;
   const progress = deck.length > 0 ? (known.size / deck.length) * 100 : 0;
 
-  // Preload voices
-  useEffect(() => { window.speechSynthesis?.getVoices(); }, []);
-
-  // Load saved progress on mount
+  // Check session on mount
   useEffect(() => {
-    const saved = loadProgress();
-    if (saved?.level) setLevel(saved.level);
-    if (saved?.category) setCategory(saved.category);
-    setLoaded(true);
+    window.speechSynthesis?.getVoices();
+    const saved = loadSession();
+    if (saved?.access_token) {
+      setSession(saved);
+    }
+    // Handle OAuth redirect
+    const hash = window.location.hash;
+    if (hash.includes("access_token")) {
+      const params = new URLSearchParams(hash.replace("#", "?"));
+      const sessionData = {
+        access_token: params.get("access_token"),
+        refresh_token: params.get("refresh_token"),
+        user: { email: params.get("user") || "" },
+      };
+      saveSession(sessionData);
+      setSession(sessionData);
+      window.location.hash = "";
+    }
+    setAuthLoading(false);
   }, []);
 
-  // Save progress when state changes
+  // Load SRS from Supabase when session + deckKey changes
   useEffect(() => {
-    if (!loaded) return;
-    saveProgress({
-      level, category,
-      lastSession: new Date().toISOString(),
-    });
-  }, [level, category, loaded]);
+    if (!session) return;
+    loadSRSFromDB();
+  }, [session, deckKey]);
 
-  // SRS handles card persistence directly via saveSRSCard()
+  async function loadSRSFromDB() {
+    try {
+      const rows = await supabase.getSRSProgress(session.user?.id, deckKey, session.access_token);
+      if (Array.isArray(rows)) {
+        const srsMap = {};
+        rows.forEach(r => { srsMap[r.card_front] = r; });
+        setSrsData(srsMap);
+        setDueToday(getDueTodayCount(srsMap));
 
-  // Reset deck when level/category changes + SRS sorting
-  useEffect(() => {
+        // Sort seeds by SRS
+        const seeds = SEED_CARDS[deckKey] || [];
+        const sorted = sortBySRS(seeds, srsMap);
+        setDeck(sorted);
+
+        // Restore known cards
+        const now = new Date();
+        const knownSet = new Set(
+          sorted.filter(c => {
+            const srs = srsMap[c.front];
+            return srs && srs.streak > 0 && new Date(srs.next_review) > now;
+          }).map(c => c.id)
+        );
+        setKnown(knownSet);
+        setUnknown(new Set());
+        setIndex(0); setFlipped(false); setShowTip(false);
+        generatingRef.current = false;
+      }
+    } catch (e) {
+      console.error("Error loading SRS:", e);
+      resetDeck();
+    }
+  }
+
+  function resetDeck() {
     const seeds = SEED_CARDS[deckKey] || [];
-    const currentSRS = getSRSData(deckKey);
-    setSrsData(currentSRS);
-    setDueToday(getDueTodayCount(currentSRS));
-
-    // Sort by SRS — due cards first
-    const sorted = sortBySRS(seeds, currentSRS);
-    setDeck(sorted);
+    setDeck(seeds);
     setIndex(0); setFlipped(false); setShowTip(false);
-    setShowPronunciation(false);
+    setKnown(new Set()); setUnknown(new Set());
     generatingRef.current = false;
-    setKnown(new Set());
-    setUnknown(new Set());
-  }, [deckKey]);
+  }
 
-  // Auto-generate when deck is small or near end
+  // Auto-generate
   useEffect(() => {
     const tooFew = deck.length < 8;
     const nearEnd = deck.length > 0 && index >= deck.length - 4;
@@ -442,7 +668,7 @@ export default function DeutschAI() {
         showToast(`+${newCards.length} tarjetas nuevas`, "success", 2500);
       }
     } catch {
-      showToast("No se pudieron generar tarjetas. Revisa tu conexión.", "error", 4000);
+      showToast("No se pudieron generar tarjetas.", "error", 4000);
     } finally {
       setGenerating(false);
       generatingRef.current = false;
@@ -458,15 +684,30 @@ export default function DeutschAI() {
     }, 180);
   }
 
+  async function saveSRSToDB(cardFront, correct) {
+    if (!session) return;
+    const existing = srsData[cardFront] || { streak: 0 };
+    const newStreak = correct ? Math.min((existing.streak || 0) + 1, SRS_INTERVALS.length - 1) : 0;
+    const daysUntil = SRS_INTERVALS[newStreak];
+    const next = new Date();
+    next.setDate(next.getDate() + daysUntil);
+    const newData = {
+      streak: newStreak,
+      next_review: next.toISOString(),
+      total_reviews: (existing.total_reviews || 0) + 1,
+      last_review: new Date().toISOString(),
+    };
+    const updated = { ...srsData, [cardFront]: newData };
+    setSrsData(updated);
+    setDueToday(getDueTodayCount(updated));
+    await supabase.upsertSRS(session.user?.id, deckKey, cardFront, newData, session.access_token);
+  }
+
   function markKnown() {
     if (!card) return;
     setKnown(s => new Set([...s, card.id]));
     setUnknown(s => { const n = new Set(s); n.delete(card.id); return n; });
-    // SRS: registrar acierto
-    saveSRSCard(deckKey, card.front, true);
-    const updated = getSRSData(deckKey);
-    setSrsData(updated);
-    setDueToday(getDueTodayCount(updated));
+    saveSRSToDB(card.front, true);
     go("next");
   }
 
@@ -474,20 +715,19 @@ export default function DeutschAI() {
     if (!card) return;
     setUnknown(s => new Set([...s, card.id]));
     setKnown(s => { const n = new Set(s); n.delete(card.id); return n; });
-    // SRS: registrar fallo — mover al final del mazo para ver pronto
-    saveSRSCard(deckKey, card.front, false);
-    const updated = getSRSData(deckKey);
-    setSrsData(updated);
-    setDueToday(getDueTodayCount(updated));
-    // Mover tarjeta fallida al final para repasar en esta sesión
-    setDeck(prev => {
-      const rest = prev.filter((_, i) => i !== index);
-      return [...rest, card];
-    });
+    saveSRSToDB(card.front, false);
+    setDeck(prev => { const rest = prev.filter((_, i) => i !== index); return [...rest, card]; });
     go("next");
   }
 
-  // Swipe support
+  function handleLogout() {
+    if (session?.access_token) supabase.signOut(session.access_token);
+    clearSession();
+    setSession(null);
+    setSidebarOpen(false);
+  }
+
+  // Swipe
   function handleTouchStart(e) { touchRef.current = e.touches[0].clientX; }
   function handleTouchEnd(e) {
     if (touchRef.current === null) return;
@@ -499,43 +739,47 @@ export default function DeutschAI() {
     touchRef.current = null;
   }
 
-  return (
-    <div
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
-      style={{
-        minHeight: "100vh",
-        background: "linear-gradient(145deg,#080810 0%,#0d0d1a 50%,#080f0b 100%)",
-        color: "#fff", fontFamily: "system-ui,sans-serif",
-        display: "flex", flexDirection: "column", alignItems: "center",
-        padding: "28px 16px 60px", position: "relative", overflow: "hidden",
-      }}
-    >
-      <ToastContainer toasts={toasts} />
+  if (authLoading) return (
+    <div style={{ minHeight: "100vh", background: "#080810", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ fontSize: 28, animation: "spin 1s linear infinite", color: "#1db954" }}>⟳</div>
+    </div>
+  );
 
-      {/* Background orbs */}
+  if (!session) return (
+    <>
+      <ToastContainer toasts={toasts} />
+      <LoginScreen onLogin={setSession} toastShow={showToast} />
+    </>
+  );
+
+  return (
+    <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} style={{ minHeight: "100vh", background: "linear-gradient(145deg,#080810 0%,#0d0d1a 50%,#080f0b 100%)", color: "#fff", fontFamily: "system-ui,sans-serif", display: "flex", flexDirection: "column", alignItems: "center", padding: "28px 16px 60px", position: "relative", overflow: "hidden" }}>
+
+      <ToastContainer toasts={toasts} />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} session={session} onLogout={handleLogout} theme={theme} />
+
+      {/* Orbs */}
       <div style={{ position: "fixed", left: "10%", top: "15%", width: 300, height: 300, borderRadius: "50%", background: theme.glow, filter: "blur(80px)", pointerEvents: "none", animation: "orbFloat 7s ease-in-out infinite alternate", opacity: 0.5 }} />
       <div style={{ position: "fixed", right: "5%", top: "55%", width: 220, height: 220, borderRadius: "50%", background: level === "A1" ? "rgba(29,185,84,0.1)" : "rgba(30,144,255,0.1)", filter: "blur(70px)", pointerEvents: "none", animation: "orbFloat 9s ease-in-out infinite alternate-reverse", opacity: 0.5 }} />
-      <div style={{ position: "fixed", left: "40%", bottom: "10%", width: 180, height: 180, borderRadius: "50%", background: "rgba(120,40,200,0.08)", filter: "blur(60px)", pointerEvents: "none", animation: "orbFloat 11s ease-in-out infinite alternate" }} />
 
-      {/* Header */}
-      <div style={{ textAlign: "center", marginBottom: 20, animation: "fadeDown 0.5s ease", zIndex: 1 }}>
-        <div style={{ fontSize: 10, letterSpacing: 5, color: "rgba(255,255,255,0.2)", textTransform: "uppercase", marginBottom: 6 }}>Aprende Alemán · IA</div>
-        <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: -1, background: `linear-gradient(135deg,#fff 30%,${theme.accent})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-          Deutsch ∞
+      {/* Header con botón menú */}
+      <div style={{ width: "100%", maxWidth: 420, display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, zIndex: 1 }}>
+        <button onClick={() => setSidebarOpen(true)} style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)", fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 4, transition: "all 0.2s" }}>
+          <div style={{ width: 16, height: 1.5, background: "currentColor", borderRadius: 1 }} />
+          <div style={{ width: 12, height: 1.5, background: "currentColor", borderRadius: 1 }} />
+          <div style={{ width: 16, height: 1.5, background: "currentColor", borderRadius: 1 }} />
+        </button>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5, background: `linear-gradient(135deg,#fff 30%,${theme.accent})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Deutsch ∞</div>
+          <div style={{ fontSize: 10, color: theme.accent, opacity: 0.7 }}>{deck.length} tarjetas · {CAT_ICONS[category]} {category}{dueToday > 0 && <span style={{ marginLeft: 6, background: "rgba(239,68,68,0.15)", color: "#e74c3c", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, padding: "1px 6px", fontSize: 9, fontWeight: 700 }}>{dueToday} hoy</span>}</div>
         </div>
-        <div style={{ fontSize: 11, color: theme.accent, marginTop: 4, opacity: 0.7 }}>
-          {deck.length} tarjetas · {CAT_ICONS[category]} {category}
-          {dueToday > 0 && (
-            <span style={{ marginLeft: 8, background: "rgba(239,68,68,0.15)", color: "#e74c3c", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 10, padding: "1px 8px", fontSize: 10, fontWeight: 700 }}>
-              {dueToday} pendientes hoy
-            </span>
-          )}
+        <div style={{ width: 40, height: 40, borderRadius: "50%", background: `linear-gradient(135deg,${theme.accent},${theme.accent}66)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700, color: "#fff" }}>
+          {(session?.user?.user_metadata?.full_name || session?.user?.email || "U")[0].toUpperCase()}
         </div>
       </div>
 
       {/* Level + Category bubble menu */}
-      <div style={{ display: "flex", gap: 12, marginBottom: 20, alignItems: "flex-start", justifyContent: "center", animation: "fadeDown 0.5s ease 0.1s both", zIndex: 2 }}>
+      <div style={{ display: "flex", gap: 12, marginBottom: 18, alignItems: "flex-start", justifyContent: "center", zIndex: 2 }}>
         {LEVELS.map(l => {
           const t = THEME[l];
           const isOpen = openLevel === l;
@@ -545,7 +789,7 @@ export default function DeutschAI() {
               {isOpen && (
                 <div style={{ display: "flex", gap: 6, padding: "10px 14px", background: "rgba(255,255,255,0.93)", borderRadius: 40, boxShadow: "0 8px 40px rgba(0,0,0,0.5)", animation: "popUp 0.25s cubic-bezier(.17,.67,.25,1.3)", position: "relative" }}>
                   {CATEGORIES.map(c => (
-                    <button key={c} onClick={() => { setLevel(l); setCategory(c); setOpenLevel(null); }} title={c} style={{ width: 50, height: 50, borderRadius: "50%", background: level === l && category === c ? t.accent : "rgba(0,0,0,0.06)", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, transition: "all 0.2s", transform: level === l && category === c ? "scale(1.1)" : "scale(1)" }}>
+                    <button key={c} onClick={() => { setLevel(l); setCategory(c); setOpenLevel(null); }} title={c} style={{ width: 50, height: 50, borderRadius: "50%", background: level === l && category === c ? t.accent : "rgba(0,0,0,0.06)", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, transition: "all 0.2s" }}>
                       <span style={{ fontSize: 18 }}>{CAT_ICONS[c]}</span>
                       <span style={{ fontSize: 7, fontWeight: 700, color: level === l && category === c ? "#fff" : "#555", textTransform: "uppercase" }}>{c.slice(0, 4)}</span>
                     </button>
@@ -553,7 +797,7 @@ export default function DeutschAI() {
                   <div style={{ position: "absolute", bottom: -8, left: "50%", transform: "translateX(-50%)", width: 0, height: 0, borderLeft: "8px solid transparent", borderRight: "8px solid transparent", borderTop: "9px solid rgba(255,255,255,0.93)" }} />
                 </div>
               )}
-              <button onClick={() => setOpenLevel(isOpen ? null : l)} style={{ padding: "10px 22px", borderRadius: 30, background: isActive ? `linear-gradient(135deg,${t.accent}25,${t.accent}0a)` : "rgba(255,255,255,0.04)", border: `2px solid ${isActive ? t.accent : "rgba(255,255,255,0.1)"}`, color: isActive ? t.accent : "rgba(255,255,255,0.35)", fontSize: 14, fontWeight: 800, cursor: "pointer", boxShadow: isActive ? `0 0 22px ${t.glow}` : "none", transition: "all 0.3s ease", transform: isOpen ? "scale(1.08)" : "scale(1)", backdropFilter: "blur(12px)" }}>
+              <button onClick={() => setOpenLevel(isOpen ? null : l)} style={{ padding: "10px 22px", borderRadius: 30, background: isActive ? `linear-gradient(135deg,${t.accent}25,${t.accent}0a)` : "rgba(255,255,255,0.04)", border: `2px solid ${isActive ? t.accent : "rgba(255,255,255,0.1)"}`, color: isActive ? t.accent : "rgba(255,255,255,0.35)", fontSize: 14, fontWeight: 800, cursor: "pointer", boxShadow: isActive ? `0 0 22px ${t.glow}` : "none", transition: "all 0.3s ease", backdropFilter: "blur(12px)" }}>
                 {l}
                 <span style={{ fontSize: 9, opacity: 0.6, marginLeft: 5, display: "block", letterSpacing: 1, textTransform: "uppercase" }}>{t.label}</span>
               </button>
@@ -580,35 +824,19 @@ export default function DeutschAI() {
           <div style={{ fontSize: 13, color: "rgba(255,255,255,0.25)" }}>Cargando...</div>
         </div>
       ) : (
-        <div onClick={() => setFlipped(f => !f)} style={{
-          width: "100%", maxWidth: 420, minHeight: 300, borderRadius: 32,
-          background: flipped ? "linear-gradient(135deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))" : "linear-gradient(135deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))",
-          backdropFilter: "blur(30px)", WebkitBackdropFilter: "blur(30px)",
-          border: `1px solid ${flipped ? theme.accent + "55" : "rgba(255,255,255,0.1)"}`,
-          cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          padding: "40px 32px 32px",
-          boxShadow: flipped ? `0 8px 48px ${theme.glow},inset 0 1px 0 rgba(255,255,255,0.1)` : "0 8px 32px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.06)",
-          position: "relative", userSelect: "none",
-          transform: animDir === "next" ? "translateX(60px) scale(0.94)" : animDir === "prev" ? "translateX(-60px) scale(0.94)" : "translateX(0) scale(1)",
-          opacity: animDir ? 0 : 1,
-          transition: "transform 0.18s ease,opacity 0.18s ease,border-color 0.4s,box-shadow 0.4s",
-          marginBottom: 14, zIndex: 1,
-        }}>
+        <div onClick={() => setFlipped(f => !f)} style={{ width: "100%", maxWidth: 420, minHeight: 300, borderRadius: 32, background: flipped ? "linear-gradient(135deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))" : "linear-gradient(135deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))", backdropFilter: "blur(30px)", border: `1px solid ${flipped ? theme.accent + "55" : "rgba(255,255,255,0.1)"}`, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 32px 32px", boxShadow: flipped ? `0 8px 48px ${theme.glow}` : "0 8px 32px rgba(0,0,0,0.5)", position: "relative", userSelect: "none", transform: animDir === "next" ? "translateX(60px) scale(0.94)" : animDir === "prev" ? "translateX(-60px) scale(0.94)" : "translateX(0) scale(1)", opacity: animDir ? 0 : 1, transition: "transform 0.18s ease,opacity 0.18s ease,border-color 0.4s", marginBottom: 14, zIndex: 1 }}>
           <div style={{ position: "absolute", top: 16, left: 20, fontSize: 10, color: "rgba(255,255,255,0.22)", letterSpacing: 2, textTransform: "uppercase" }}>{CAT_ICONS[category]} {category}</div>
           <div style={{ position: "absolute", top: 16, right: 20, fontSize: 10, fontWeight: 700, color: flipped ? theme.accent : "rgba(255,255,255,0.15)", transition: "color 0.3s" }}>{flipped ? "ES" : "DE"}</div>
-
-          {/* Badge aprendida/repasar */}
           {(known.has(card.id) || unknown.has(card.id)) && (
             <div style={{ position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)", fontSize: 9, padding: "2px 10px", borderRadius: 10, background: known.has(card.id) ? "rgba(29,185,84,0.12)" : "rgba(231,76,60,0.12)", color: known.has(card.id) ? "#1db954" : "#e74c3c", border: `1px solid ${known.has(card.id) ? "rgba(29,185,84,0.2)" : "rgba(231,76,60,0.2)"}`, fontWeight: 700 }}>
               {known.has(card.id) ? "Aprendida" : "Repasar"}
             </div>
           )}
-
           {!flipped ? (
             <div style={{ textAlign: "center" }}>
               <div style={{ fontSize: 40, fontWeight: 800, letterSpacing: -1.5, marginBottom: 18, lineHeight: 1.1, textShadow: `0 0 40px ${theme.glow}` }}>{card.front}</div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
-                <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} style={{ width: 44, height: 44, borderRadius: "50%", background: speaking ? theme.glass : "rgba(255,255,255,0.06)", border: `2px solid ${speaking ? theme.accent : "rgba(255,255,255,0.12)"}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: speaking ? `0 0 20px ${theme.glow}` : "none", transition: "all 0.25s" }}>
+                <button onClick={(e) => { e.stopPropagation(); speakGerman(card.front, () => setSpeaking(true), () => setSpeaking(false)); }} style={{ width: 44, height: 44, borderRadius: "50%", background: speaking ? theme.glass : "rgba(255,255,255,0.06)", border: `2px solid ${speaking ? theme.accent : "rgba(255,255,255,0.12)"}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "all 0.25s" }}>
                   <span style={{ fontSize: 20, animation: speaking ? "speakPulse 0.6s ease infinite alternate" : "none" }}>🔊</span>
                 </button>
                 <span style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", fontStyle: "italic" }}>{card.phonetic}</span>
@@ -635,7 +863,7 @@ export default function DeutschAI() {
           </button>
         )}
         {card && (
-          <button onClick={() => setShowPronunciation(s => !s)} style={{ width: 44, height: 44, borderRadius: "50%", background: showPronunciation ? theme.glass : "rgba(255,255,255,0.05)", border: `2px solid ${showPronunciation ? theme.accent : "rgba(255,255,255,0.1)"}`, color: showPronunciation ? theme.accent : "rgba(255,255,255,0.4)", fontSize: showPronunciation ? 14 : 20, cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: showPronunciation ? `0 0 16px ${theme.glow}` : "none", transition: "all 0.2s" }}>
+          <button onClick={() => setShowPronunciation(s => !s)} style={{ width: 44, height: 44, borderRadius: "50%", background: showPronunciation ? theme.glass : "rgba(255,255,255,0.05)", border: `2px solid ${showPronunciation ? theme.accent : "rgba(255,255,255,0.1)"}`, color: showPronunciation ? theme.accent : "rgba(255,255,255,0.4)", fontSize: showPronunciation ? 14 : 20, cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.2s" }}>
             {showPronunciation ? "✕" : "🎤"}
           </button>
         )}
@@ -647,13 +875,12 @@ export default function DeutschAI() {
 
       {/* Action buttons */}
       <div style={{ display: "flex", gap: 10, marginBottom: 22, alignItems: "center", zIndex: 1 }}>
-        <button onClick={() => go("prev")} disabled={index === 0} style={{ width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,0.05)", border: "2px solid rgba(255,255,255,0.1)", color: index === 0 ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.6)", fontSize: 20, cursor: index === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(12px)", transition: "all 0.2s", boxShadow: "0 4px 16px rgba(0,0,0,0.3)" }}>←</button>
+        <button onClick={() => go("prev")} disabled={index === 0} style={{ width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,0.05)", border: "2px solid rgba(255,255,255,0.1)", color: index === 0 ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.6)", fontSize: 20, cursor: index === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(12px)", transition: "all 0.2s" }}>←</button>
         <button onClick={markUnknown} style={{ padding: "12px 22px", borderRadius: 26, background: "rgba(231,76,60,0.08)", border: "1px solid rgba(231,76,60,0.28)", color: "#e74c3c", fontSize: 13, fontWeight: 700, cursor: "pointer", backdropFilter: "blur(10px)", transition: "all 0.2s" }}>✗ Repasar</button>
         <button onClick={markKnown} style={{ padding: "12px 22px", borderRadius: 26, background: theme.glass, border: `1px solid ${theme.border}`, color: theme.accent, fontSize: 13, fontWeight: 700, cursor: "pointer", boxShadow: `0 0 18px ${theme.glow}`, backdropFilter: "blur(10px)", transition: "all 0.2s" }}>✓ Lo sé</button>
-        <button onClick={() => go("next")} style={{ width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,0.05)", border: "2px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)", fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(12px)", transition: "all 0.2s", boxShadow: "0 4px 16px rgba(0,0,0,0.3)" }}>→</button>
+        <button onClick={() => go("next")} style={{ width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,0.05)", border: "2px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)", fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(12px)", transition: "all 0.2s" }}>→</button>
       </div>
 
-      {/* Generating indicator */}
       {generating && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontSize: 12, color: theme.accent, zIndex: 1 }}>
           <div style={{ width: 7, height: 7, borderRadius: "50%", background: theme.accent, animation: "speakPulse 0.7s ease infinite alternate" }} />
@@ -675,18 +902,21 @@ export default function DeutschAI() {
         {generating ? "Generando..." : "⟳ Generar más tarjetas"}
       </button>
 
-      <div style={{ marginTop: 20, fontSize: 10, color: "rgba(255,255,255,0.06)", letterSpacing: 4, textTransform: "uppercase", zIndex: 1 }}>
-       Deutsch ∞ · IA v2 · {level} · {category}
+      <div style={{ marginTop: 20, fontSize: 9, color: "rgba(255,255,255,0.05)", letterSpacing: 4, textTransform: "uppercase", zIndex: 1 }}>
+        Glota · IA · {level} · {category}
       </div>
 
       <style>{`
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        input::placeholder { color: rgba(255,255,255,0.25); }
+        input { color-scheme: dark; }
         @keyframes speakPulse { from{transform:scale(1);opacity:0.6} to{transform:scale(1.35);opacity:1} }
         @keyframes wave { from{height:3px} to{height:24px} }
         @keyframes orbFloat { from{transform:translate(-50%,-50%) scale(1)} to{transform:translate(-50%,-50%) scale(1.15) translateY(-16px)} }
         @keyframes fadeDown { from{opacity:0;transform:translateY(-10px)} to{opacity:1;transform:translateY(0)} }
         @keyframes slideUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
         @keyframes slideDown { from{opacity:0;transform:translateY(-14px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes slideRight { from{transform:translateX(-100%)} to{transform:translateX(0)} }
         @keyframes popUp { from{opacity:0;transform:scale(0.8) translateY(8px)} to{opacity:1;transform:scale(1) translateY(0)} }
         @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
         button:active { transform:scale(0.95) !important; }
