@@ -387,17 +387,43 @@ function PronunciationPanel({ card, theme, onSpeak, speaking }) {
   );
 }
 
+// ─── LOGO COMPONENTS ─────────────────────────────────────────────────────
+function GlotaIcon({ size = 48 }) {
+  return <img src="/icon.jpg" alt="Glota" style={{ width: size, height: size, borderRadius: size * 0.22, objectFit: "cover" }} />;
+}
+
+function GlotaLogoFull({ height = 36 }) {
+  return <img src="/logo.jpg" alt="Glota" style={{ height, objectFit: "contain", filter: "brightness(1.1)" }} />;
+}
+
 // ─── LOGIN SCREEN ─────────────────────────────────────────────────────────
-function LoginScreen({ onLogin, toastShow }) {
-  const [mode, setMode] = useState("login"); // login | register
+function LoginScreen({ onLogin, toastShow, confirmedEmail }) {
+  const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState({});
+
+  function validate() {
+    const errs = {};
+    if (mode === "register" && !name.trim()) errs.name = "Ingresa tu nombre";
+    if (!email.trim()) {
+      errs.email = "Ingresa tu correo";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      errs.email = "Correo inválido";
+    }
+    if (!password) {
+      errs.password = "Ingresa tu contraseña";
+    } else if (mode === "register" && password.length < 8) {
+      errs.password = "Mínimo 8 caracteres";
+    }
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  }
 
   async function handleSubmit() {
-    if (!email || !password) { toastShow("Completa todos los campos", "error"); return; }
-    if (mode === "register" && !name) { toastShow("Ingresa tu nombre", "error"); return; }
+    if (!validate()) return;
     setLoading(true);
     try {
       let result;
@@ -407,16 +433,20 @@ function LoginScreen({ onLogin, toastShow }) {
         result = await supabase.signUp(email, password, name);
       }
       if (result.error) {
-        toastShow(result.error.message || "Error de autenticación", "error");
+        const msg = result.error.message || "Error de autenticación";
+        if (msg.includes("Invalid login")) toastShow("Correo o contraseña incorrectos", "error");
+        else if (msg.includes("already registered")) toastShow("Este correo ya está registrado", "error");
+        else if (msg.includes("Email not confirmed")) toastShow("Confirma tu correo antes de entrar", "error", 5000);
+        else toastShow(msg, "error");
       } else if (result.access_token) {
         saveSession(result);
         onLogin(result);
         toastShow(mode === "login" ? "¡Bienvenido de vuelta!" : "¡Cuenta creada!", "success");
       } else if (mode === "register") {
-        toastShow("Revisa tu correo para confirmar tu cuenta", "info", 5000);
+        toastShow("¡Listo! Revisa tu correo para confirmar tu cuenta 📧", "info", 6000);
       }
     } catch (e) {
-      toastShow("Error de conexión", "error");
+      toastShow("Error de conexión. Intenta de nuevo.", "error");
     } finally {
       setLoading(false);
     }
@@ -426,31 +456,53 @@ function LoginScreen({ onLogin, toastShow }) {
     window.location.href = supabase.getGoogleOAuthURL();
   }
 
+  const inputStyle = (field) => ({
+    width: "100%", padding: "13px 16px", borderRadius: 14,
+    background: errors[field] ? "rgba(231,76,60,0.08)" : "rgba(255,255,255,0.06)",
+    border: `1px solid ${errors[field] ? "rgba(231,76,60,0.4)" : "rgba(255,255,255,0.1)"}`,
+    color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box",
+    marginBottom: errors[field] ? 4 : 10, transition: "border-color 0.2s",
+  });
+
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(145deg,#080810 0%,#0d0d1a 50%,#080f0b 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 20px", fontFamily: "system-ui,sans-serif", color: "#fff" }}>
-      <div style={{ position: "fixed", left: "10%", top: "15%", width: 300, height: 300, borderRadius: "50%", background: "rgba(29,185,84,0.2)", filter: "blur(80px)", pointerEvents: "none" }} />
-      <div style={{ position: "fixed", right: "5%", bottom: "20%", width: 220, height: 220, borderRadius: "50%", background: "rgba(30,144,255,0.15)", filter: "blur(70px)", pointerEvents: "none" }} />
+      <div style={{ position: "fixed", left: "10%", top: "15%", width: 300, height: 300, borderRadius: "50%", background: "rgba(255,107,26,0.15)", filter: "blur(80px)", pointerEvents: "none" }} />
+      <div style={{ position: "fixed", right: "5%", bottom: "20%", width: 220, height: 220, borderRadius: "50%", background: "rgba(255,61,0,0.1)", filter: "blur(70px)", pointerEvents: "none" }} />
 
-      <div style={{ textAlign: "center", marginBottom: 32 }}>
-        <div style={{ fontSize: 10, letterSpacing: 5, color: "rgba(255,255,255,0.2)", textTransform: "uppercase", marginBottom: 8 }}>Aprende Idiomas con IA</div>
-        <div style={{ fontSize: 42, fontWeight: 800, letterSpacing: -2, background: "linear-gradient(135deg,#fff 30%,#1db954)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Glota</div>
-        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", marginTop: 6 }}>Tu progreso guardado en la nube ☁️</div>
+      {/* Logo */}
+      <div style={{ textAlign: "center", marginBottom: 28 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
+          <GlotaLogoFull height={52} />
+        </div>
+        <div style={{ fontSize: 10, letterSpacing: 4, color: "rgba(255,255,255,0.2)", textTransform: "uppercase", marginBottom: 4 }}>Aprende Idiomas con IA</div>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.25)" }}>Tu progreso guardado en la nube ☁️</div>
       </div>
 
       <div style={{ width: "100%", maxWidth: 380, background: "rgba(255,255,255,0.04)", backdropFilter: "blur(30px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 24, padding: "28px 24px" }}>
 
+        {/* Correo confirmado banner */}
+        {confirmedEmail && (
+          <div style={{ background: "rgba(29,185,84,0.12)", border: "1px solid rgba(29,185,84,0.3)", borderRadius: 14, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 18 }}>✅</span>
+            <div>
+              <div style={{ fontSize: 13, color: "#1db954", fontWeight: 700 }}>¡Correo confirmado!</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Ya puedes iniciar sesión con tu cuenta</div>
+            </div>
+          </div>
+        )}
+
         {/* Tabs */}
         <div style={{ display: "flex", background: "rgba(255,255,255,0.05)", borderRadius: 14, padding: 4, marginBottom: 24 }}>
           {["login", "register"].map(m => (
-            <button key={m} onClick={() => setMode(m)} style={{ flex: 1, padding: "9px", borderRadius: 11, background: mode === m ? "rgba(255,255,255,0.1)" : "transparent", border: "none", color: mode === m ? "#fff" : "rgba(255,255,255,0.35)", fontSize: 13, fontWeight: 600, cursor: "pointer", transition: "all 0.2s" }}>
+            <button key={m} onClick={() => { setMode(m); setErrors({}); }} style={{ flex: 1, padding: "9px", borderRadius: 11, background: mode === m ? "rgba(255,107,26,0.2)" : "transparent", border: `1px solid ${mode === m ? "rgba(255,107,26,0.3)" : "transparent"}`, color: mode === m ? "#FF6B1A" : "rgba(255,255,255,0.35)", fontSize: 13, fontWeight: 700, cursor: "pointer", transition: "all 0.2s" }}>
               {m === "login" ? "Iniciar sesión" : "Registrarse"}
             </button>
           ))}
         </div>
 
-        {/* Google button */}
+        {/* Google */}
         <button onClick={handleGoogle} style={{ width: "100%", padding: "13px", borderRadius: 14, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 16, transition: "all 0.2s" }}>
-          <span style={{ fontSize: 18 }}>🔵</span>
+          <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.48-1.6 2.04v2.01h2.6a7.8 7.8 0 002.38-5.88c0-.57-.05-.66-.15-1.18z"/><path fill="#34A853" d="M8.98 17c2.16 0 3.97-.72 5.3-1.94l-2.6-2a4.8 4.8 0 01-7.18-2.54H1.83v2.07A8 8 0 008.98 17z"/><path fill="#FBBC05" d="M4.5 10.52a4.8 4.8 0 010-3.04V5.41H1.83a8 8 0 000 7.18l2.67-2.07z"/><path fill="#EA4335" d="M8.98 4.18c1.17 0 2.23.4 3.06 1.2l2.3-2.3A8 8 0 001.83 5.4L4.5 7.49a4.77 4.77 0 014.48-3.31z"/></svg>
           Continuar con Google
         </button>
 
@@ -460,43 +512,32 @@ function LoginScreen({ onLogin, toastShow }) {
           <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.08)" }} />
         </div>
 
-        {/* Name field (register only) */}
+        {/* Name */}
         {mode === "register" && (
-          <input
-            placeholder="Tu nombre"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            style={{ width: "100%", padding: "13px 16px", borderRadius: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 14, marginBottom: 10, outline: "none", boxSizing: "border-box" }}
-          />
+          <>
+            <input placeholder="Tu nombre" value={name} onChange={e => { setName(e.target.value); setErrors(p => ({...p, name: ""})); }} style={inputStyle("name")} />
+            {errors.name && <div style={{ fontSize: 11, color: "#e74c3c", marginBottom: 8, paddingLeft: 4 }}>⚠ {errors.name}</div>}
+          </>
         )}
 
         {/* Email */}
-        <input
-          type="email"
-          placeholder="Correo electrónico"
-          value={email}
-          onChange={e => setEmail(e.target.value)}
-          style={{ width: "100%", padding: "13px 16px", borderRadius: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 14, marginBottom: 10, outline: "none", boxSizing: "border-box" }}
-        />
+        <input type="email" placeholder="Correo electrónico" value={email} onChange={e => { setEmail(e.target.value); setErrors(p => ({...p, email: ""})); }} style={inputStyle("email")} />
+        {errors.email && <div style={{ fontSize: 11, color: "#e74c3c", marginBottom: 8, paddingLeft: 4 }}>⚠ {errors.email}</div>}
 
         {/* Password */}
-        <input
-          type="password"
-          placeholder="Contraseña"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && handleSubmit()}
-          style={{ width: "100%", padding: "13px 16px", borderRadius: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 14, marginBottom: 20, outline: "none", boxSizing: "border-box" }}
-        />
+        <input type="password" placeholder={mode === "register" ? "Contraseña (mín. 8 caracteres)" : "Contraseña"} value={password} onChange={e => { setPassword(e.target.value); setErrors(p => ({...p, password: ""})); }} onKeyDown={e => e.key === "Enter" && handleSubmit()} style={inputStyle("password")} />
+        {errors.password && <div style={{ fontSize: 11, color: "#e74c3c", marginBottom: 8, paddingLeft: 4 }}>⚠ {errors.password}</div>}
+
+        <div style={{ marginBottom: 16 }} />
 
         {/* Submit */}
-        <button onClick={handleSubmit} disabled={loading} style={{ width: "100%", padding: "14px", borderRadius: 14, background: loading ? "rgba(29,185,84,0.3)" : "linear-gradient(135deg,#1db954,#17a349)", border: "none", color: "#fff", fontSize: 15, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", transition: "all 0.2s" }}>
+        <button onClick={handleSubmit} disabled={loading} style={{ width: "100%", padding: "14px", borderRadius: 14, background: loading ? "rgba(255,107,26,0.3)" : "linear-gradient(135deg,#FF6B1A,#FF3D00)", border: "none", color: "#fff", fontSize: 15, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", transition: "all 0.2s", boxShadow: loading ? "none" : "0 4px 20px rgba(255,107,26,0.3)" }}>
           {loading ? "..." : mode === "login" ? "Iniciar sesión" : "Crear cuenta"}
         </button>
       </div>
 
-      <div style={{ marginTop: 20, fontSize: 11, color: "rgba(255,255,255,0.15)", textAlign: "center" }}>
-        Tu progreso se guarda automáticamente en la nube
+      <div style={{ marginTop: 16, fontSize: 11, color: "rgba(255,255,255,0.12)", textAlign: "center" }}>
+        Al continuar aceptas nuestros términos de uso
       </div>
     </div>
   );
@@ -516,8 +557,8 @@ function Sidebar({ open, onClose, session, onLogout, theme }) {
 
         {/* Header */}
         <div style={{ padding: "48px 20px 20px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-          <div style={{ width: 52, height: 52, borderRadius: "50%", background: `linear-gradient(135deg,${theme.accent},${theme.accent}66)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, marginBottom: 12 }}>
-            {name[0]?.toUpperCase() || "U"}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+            <GlotaIcon size={40} />
           </div>
           <div style={{ fontSize: 16, fontWeight: 700, color: "#fff" }}>{name}</div>
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", marginTop: 3 }}>{email}</div>
@@ -555,6 +596,7 @@ function Sidebar({ open, onClose, session, onLogout, theme }) {
 export default function DeutschAI() {
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [confirmedEmail, setConfirmedEmail] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [level, setLevel] = useState("A1");
   const [category, setCategory] = useState("Vocabulario");
@@ -587,18 +629,26 @@ export default function DeutschAI() {
     if (saved?.access_token) {
       setSession(saved);
     }
-    // Handle OAuth redirect
+    // Handle OAuth/email redirect
     const hash = window.location.hash;
     if (hash.includes("access_token")) {
       const params = new URLSearchParams(hash.replace("#", "?"));
-      const sessionData = {
-        access_token: params.get("access_token"),
-        refresh_token: params.get("refresh_token"),
-        user: { email: params.get("user") || "" },
-      };
-      saveSession(sessionData);
-      setSession(sessionData);
+      const type = params.get("type"); // "signup" = confirmación de correo, "recovery", etc.
       window.location.hash = "";
+
+      if (type === "signup" || type === "email_change") {
+        // Es confirmación de correo — mostrar login con mensaje
+        setConfirmedEmail(true);
+      } else {
+        // Es login con Google u OAuth — entrar directo
+        const sessionData = {
+          access_token: params.get("access_token"),
+          refresh_token: params.get("refresh_token"),
+          user: { email: params.get("user") || "" },
+        };
+        saveSession(sessionData);
+        setSession(sessionData);
+      }
     }
     setAuthLoading(false);
   }, []);
@@ -650,12 +700,13 @@ export default function DeutschAI() {
     generatingRef.current = false;
   }
 
-  // Auto-generate
+  // Auto-generate (solo si hay sesión activa)
   useEffect(() => {
+    if (!session) return;
     const tooFew = deck.length < 8;
     const nearEnd = deck.length > 0 && index >= deck.length - 4;
     if ((tooFew || nearEnd) && !generatingRef.current) loadMore();
-  }, [deck.length, index]);
+  }, [deck.length, index, session]);
 
   async function loadMore() {
     if (generatingRef.current) return;
@@ -748,7 +799,7 @@ export default function DeutschAI() {
   if (!session) return (
     <>
       <ToastContainer toasts={toasts} />
-      <LoginScreen onLogin={setSession} toastShow={showToast} />
+      <LoginScreen onLogin={setSession} toastShow={showToast} confirmedEmail={confirmedEmail} />
     </>
   );
 
@@ -773,9 +824,9 @@ export default function DeutschAI() {
           <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5, background: `linear-gradient(135deg,#fff 30%,${theme.accent})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Deutsch ∞</div>
           <div style={{ fontSize: 10, color: theme.accent, opacity: 0.7 }}>{deck.length} tarjetas · {CAT_ICONS[category]} {category}{dueToday > 0 && <span style={{ marginLeft: 6, background: "rgba(239,68,68,0.15)", color: "#e74c3c", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, padding: "1px 6px", fontSize: 9, fontWeight: 700 }}>{dueToday} hoy</span>}</div>
         </div>
-        <div style={{ width: 40, height: 40, borderRadius: "50%", background: `linear-gradient(135deg,${theme.accent},${theme.accent}66)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700, color: "#fff" }}>
-          {(session?.user?.user_metadata?.full_name || session?.user?.email || "U")[0].toUpperCase()}
-        </div>
+        <button onClick={() => setSidebarOpen(true)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+          <GlotaIcon size={40} />
+        </button>
       </div>
 
       {/* Level + Category bubble menu */}
