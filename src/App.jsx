@@ -389,11 +389,11 @@ function PronunciationPanel({ card, theme, onSpeak, speaking }) {
 
 // ─── LOGO COMPONENTS ─────────────────────────────────────────────────────
 function GlotaIcon({ size = 48 }) {
-  return <img src="/icon.jpg" alt="Glota" style={{ width: size, height: size, borderRadius: size * 0.22, objectFit: "cover" }} />;
+  return <img src="/icon.jpg" alt="Glota" style={{ width: size, height: size, borderRadius: size * 0.22, objectFit: "cover", boxShadow: "0 4px 20px rgba(255,107,26,0.3)" }} />;
 }
 
 function GlotaLogoFull({ height = 36 }) {
-  return <img src="/logo.jpg" alt="Glota" style={{ height, objectFit: "contain", filter: "brightness(1.1)" }} />;
+  return <img src="/logo.jpg" alt="Glota" style={{ height, objectFit: "contain", filter: "invert(1) brightness(1.2)" }} />;
 }
 
 // ─── LOGIN SCREEN ─────────────────────────────────────────────────────────
@@ -471,8 +471,9 @@ function LoginScreen({ onLogin, toastShow, confirmedEmail }) {
 
       {/* Logo */}
       <div style={{ textAlign: "center", marginBottom: 28 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
-          <GlotaLogoFull height={52} />
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, marginBottom: 8 }}>
+          <GlotaIcon size={72} />
+          <GlotaLogoFull height={38} />
         </div>
         <div style={{ fontSize: 10, letterSpacing: 4, color: "rgba(255,255,255,0.2)", textTransform: "uppercase", marginBottom: 4 }}>Aprende Idiomas con IA</div>
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.25)" }}>Tu progreso guardado en la nube ☁️</div>
